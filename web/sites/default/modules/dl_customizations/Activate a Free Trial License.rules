@@ -1,0 +1,37 @@
+{ "commerce_cardonfile_order_status_after_free_trial_auth" : {
+    "LABEL" : "Activate a free trial",
+    "PLUGIN" : "reaction rule",
+    "WEIGHT" : "-9",
+    "OWNER" : "rules",
+    "REQUIRES" : [
+      "rules",
+      "php",
+      "dl_billing_management",
+      "commerce_order",
+      "commerce_license",
+      "entity"
+    ],
+    "ON" : { "commerce_order_update" : [] },
+    "IF" : [
+      { "data_is" : { "data" : [ "commerce-order:status" ], "value" : "checkout_payment" } }
+    ],
+    "DO" : [
+      { "php_eval" : { "code" : "watchdog(\u0027rules debug\u0027,\u0022attempting to update the order status\u0022);" } },
+      { "dl_billing_management_advance_free_trial" : { "order" : [ "commerce-order" ] } },
+      { "commerce_order_update_status" : {
+          "commerce_order" : [ "commerce_order" ],
+          "order_status" : "checkout_complete"
+        }
+      },
+      { "php_eval" : { "code" : "watchdog(\u0027rules debug\u0027,\u0022status updated\u0022);" } },
+      { "commerce_license_activate_order_licenses" : { "commerce_order" : [ "commerce_order" ] } },
+      { "dl_billing_management_set_free_trial_duration" : { "order" : [ "commerce-order" ] } },
+      { "LOOP" : {
+          "USING" : { "list" : [ "commerce-order:commerce-line-items" ] },
+          "ITEM" : { "list_item" : "Current list item" },
+          "DO" : []
+        }
+      }
+    ]
+  }
+}

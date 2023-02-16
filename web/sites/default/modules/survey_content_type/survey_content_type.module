@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Suvey feature.
+ */
+
+include_once 'survey_content_type.features.inc';

@@ -1,0 +1,4516 @@
+<?php
+
+/**
+ * @file dl_billing_management.module
+ * This module extends drupal commerce and allows a user to view and manage some details
+ * of their purchased licesnses.
+ */
+
+/**
+ * Implements hook_help().
+ */
+//function impersonate_help($path, $arg) {
+  #TO-DO: Document this weirdness with impersonate
+//}
+
+
+/**
+ * Implements hook_menu(). (Routing)
+ */
+function dl_billing_management_menu() {
+  $items = array();
+  $items['my-organization/my-license'] = array(
+    'title' => 'Your Current License',
+    'page callback' => 'dl_billing_management_dashboard',
+    'access callback' => 'organization_control_is_any_admin',
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/license'] = array(
+    'title' => 'License Information',
+    'page callback' => 'dl_billing_management_license_page',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/transaction/%'] = array(
+    'title' => 'Your Current License',
+    'page callback' => 'dl_billing_management_transaction_details',
+    'page arguments' => array(2),
+    'access callback' => 'dl_billing_management_transaction_admin',
+    'access arguments' => array(2),
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/get-license'] = array(
+    'title' => 'License Information',
+    'page callback' => 'dl_billing_management_get_license_page',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['my-organization/reactivate-license'] = array(
+    'title' => 'License Information',
+    'page callback' => 'dl_billing_management_reactivate_failed_renewal_page',
+    'access callback' => 'dl_billing_management_reactivate_page_access',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['my-organization/reactivate-license/%'] = array(
+    'title' => 'License Information',
+    'page callback' => 'dl_billing_management_reactivate_failed_renewal_page',
+    'page arguments' => array(2),
+    'access callback' => 'organization_control_user_has_role',
+    'access arguments' => array('Billing Admin'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/monthly-to-yearly'] = array(
+    'title' => 'Upgrade to Yearly Billing and Save',
+    'page callback' => 'dl_billing_management_monthly_to_yearly_page',
+    'access callback' => 'organization_control_is_any_admin',
+    'type' => MENU_CALLBACK,
+  );
+  $items['admin/commerce/orders/offline'] = array(
+    'title' => 'Create an Offline Order',
+    'page callback' => 'dl_billing_management_orders_offline_page',
+    'access callback' => 'user_access',
+    'access arguments' => array('create offline orders'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/commerce/orders/adjust-online-orders'] = array(
+    'title' => 'Modify an Organization\'s Current Online Order',
+    'page callback' => 'dl_billing_management_orders_adjust_online_find_org_page',
+    'access callback' => 'organization_control_user_has_role',
+    'access arguments' => array('Billing Admin'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/commerce/orders/adjust-online-orders/%'] = array(
+    'title' => 'Modify an Organization\'s Current Online Order',
+    'page callback' => 'dl_billing_management_orders_adjust_online_page',
+    'page arguments' => array(4),
+    'access callback' => 'organization_control_user_has_role',
+    'access arguments' => array('Billing Admin'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/commerce/orders/adjust-online-orders/%/%'] = array(
+    'title' => 'Modify an Organization\'s Current Online Order',
+    'page callback' => 'dl_billing_management_orders_adjust_online_page',
+    'page arguments' => array(4,5),
+    'access callback' => 'organization_control_user_has_role',
+    'access arguments' => array('Billing Admin'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items['admin/commerce/orders/fix-missing-billing-user/%'] = array(
+    'title' => 'Fix teams that are missing billing users',
+    'page callback' => 'dl_billing_management_orders_fix_missing_bu',
+    'page arguments' => array(4),
+    'access callback' => 'organization_control_user_has_role',
+    'access arguments' => array('Billing Admin'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/commerce/license/organization/grant'] = array(
+    'title' => 'Temporarly Grant an Organization Full Acccess',
+    'page callback' => 'dl_billing_management_grant_organization_page',
+    'access callback' => 'user_access',
+    'access arguments' => array('administer licenses'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['billing/testbed'] = array(
+    'title' => 'Test Bed',
+    'page callback' => 'dl_billing_management_testbed',
+    'access callback' => 'organization_control_user_has_role',
+    'access arguments' => array('administrator'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_menu_local_tasks_alter().
+ */
+function dl_billing_management_menu_local_tasks_alter(&$data, $router_item, $root_path) {
+  // Add action link 'admin/commerce/orders/add' on 'admin/commerce/orders'.
+  if ($root_path == 'admin/commerce/orders') {
+    $item = menu_get_item('admin/commerce/orders/offline');
+    if ($item['access']) {
+      $data['actions']['output'][] = array(
+        '#theme' => 'menu_local_action',
+        '#link' => $item,
+      );
+    }
+  }
+}
+
+/*
+ * Form Alters concering Billing
+*/
+function dl_billing_management_form_alter(&$form,&$form_state){
+  global $user;
+  if($form['#form_id']=="commerce_discount_edit_order_discount_form"){
+    /*typically a coupon/discount would only apply to the first order. In this case, that
+    * first order is a free trial. There is a custom rule that triggers on renewal and
+    * looks if the previous order was a free trial and had a coupon, if so, apply it.
+    * This assumed the discount  type was a "order discount" not a "Product discount"
+    * So we are forcing that option.
+    */
+    //remove all discount type options
+    $form['commerce_discount_type']['#options'] = array();
+    //add only order discount
+    $form['commerce_discount_type']['#options']['order_discount'] = "Order discount";
+  }
+}
+
+/*
+* Returns Billing Paths - mostly hard coded and tested paths. determines if its a billing_cycle_id
+* page, eligible for billing impersonate.
+*/
+function dl_billing_management_is_billing_page($path){
+  //exempt drupal admins
+  global $user;
+  if($user->uid == 0 || $user->uid == 1){
+    return false;
+  }
+  // The Billing Pages are special.
+  $billingPaths = array(
+    "my-organization/my-license",
+    //The Checkout path has a dynamic var and is hard coded in the conditional below.
+  );
+  $pathParts = explode("/",$path);
+  //instead of one large conditional that is hard to run I am going to run a few tests and that run those results through the big conditional
+  //Is it a checkout page
+  if( isset($pathParts[0]) && isset($pathParts[1]) && isset($pathParts[2]) && $pathParts[0]=="checkout" && (is_numeric($pathParts['1']) && $pathParts['1']>0) && ($pathParts['2']=="complete" || $pathParts['2']=="payment")){
+    return true;
+  }
+  //Is it an order page.
+  if( isset($pathParts[0]) && isset($pathParts[1]) && isset($pathParts[2]) && isset($pathParts[3]) && $pathParts[0]=="user" && (is_numeric($pathParts['1']) && $pathParts['1']>0) && $pathParts['2']=="orders" && (is_numeric($pathParts['3']) && $pathParts['3']>0)){
+    return true;
+  }
+
+  //Is it a card management page.
+  if( isset($pathParts[0]) && isset($pathParts[1]) && isset($pathParts[2]) && isset($pathParts[3]) && $pathParts[0]=="user" && (is_numeric($pathParts['1']) && $pathParts['1']>0) && $pathParts['2']=="cards" && $pathParts['3']=='add'){
+//    return true;
+  }
+
+  //Is it it in the defined paths.
+  if(in_array($path,$billingPaths)){
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Implements hook_init().
+ */
+function dl_billing_management_init() {
+  //The Billing Page is special. Test the configured array and the checkout path.
+  $currPath = drupal_get_path_alias();
+  $considerImpersonate = dl_billing_management_is_billing_page($currPath);
+
+
+  global $user;
+  $impersonating = false;
+
+  $r_uid = db_query("SELECT uid_from FROM {dl_impersonate} WHERE sid = :sid AND uid_as = :uid_as", array(
+    ':sid' => session_id(),
+    ':uid_as' => $user->uid,
+  ))->fetchField();
+
+  //Who are they impersonating?
+  if ($r_uid == 0) {
+    if (isset($_SESSION)) {
+      unset($_SESSION['impersonating']);
+    }
+    $r_uid = $user->uid;
+    $realuser = user_load($r_uid);
+  }
+  else {
+    $_SESSION['impersonating'] = $r_uid;
+    $impersonating = true;
+  }
+
+  if($considerImpersonate == true){
+
+     if($impersonating != true){
+        //If they are a group admin, they sould be able to impersonate the billing user.
+        //confirm they are an admin of the billing user's gid.
+        $currOrg = organization_control_orgID($user);
+        if($currOrg== false || !organization_control_is_group_admin($currOrg,$r_uid)){
+          drupal_set_message("There was a permssion errror, please contact an administrator","error");
+          impersonate_log($user->uid,null,"While visiting a billing page, this user was found to not belong to a group or is not an admin. currOrg:".$currOrg."; r_uid:".$r_uid."; test:".organization_control_is_group_admin($currOrg,$r_uid).";");
+
+          module_invoke_all('user_logout', $user);
+          // Destroy the current session, and reset $user to the anonymous user.
+          session_destroy();
+          drupal_goto();
+
+        }
+        else{
+          //get the billing user id
+          $licenseInfo = organization_control_subscription_info($user);
+          //if an inactive license.
+          if($licenseInfo==false){
+            //look up the billing user some other way
+            $b_uid = organization_control_subscriber_uid($user);
+            if($b_uid==false){
+              drupal_set_message("There was a problem looking up your billing information (0x1a).","error");
+              impersonate_log($user->uid,null,"An admin user visited a billing page but billing information could not be found.");
+              drupal_goto();
+            }else{
+              $b_user = user_load($b_uid);
+            }
+          }else{
+            $b_user = $licenseInfo['currentSubscriber'];
+            $b_uid = $b_user->uid;
+          }
+          //confirm this billing user is a billing user (role)
+          if(!in_array('billing_only', $b_user->roles)){
+              drupal_set_message("There was a problem looking up your billing information (0x2a).","error");
+              impersonate_log($user->uid,null,"An admin user visited a billing page but the billing user was not marked as a billing user.");
+              drupal_goto();
+          }
+          impersonate_log($user->uid,$b_uid,"An admin user visited a billing page and began impersonating.");
+          $impersonating = true;
+          impersonate_switch_user($b_uid);
+        }
+     }
+  }
+  //not the billing page. You should not be impersonating.
+  elseif($impersonating == true){
+    impersonate_log($r_uid,$user->uid,"An admin user left a billing page and stopped impersonating.");
+    $impersonating = false;
+    impersonate_switch_back();
+  }
+
+    //Security check. If current user is billing only or If Impersonating, Confirm they have permission to do so.
+    if(in_array('billing_only', $user->roles) || $impersonating==true){
+
+      //if they are billing only but not found as a impersonator there is a problem. We don't know how they got here or if they should have these permissions. So we have to reject them.
+      if(in_array('billing_only', $user->roles) && $impersonating!=true){
+        impersonate_log($r_uid,$user->uid,"An authenicated user was marked as billing only and had no impersonate info to validate. For security reasons they were logged out.");
+
+        module_invoke_all('user_logout', $user);
+        // Destroy the current session, and reset $user to the anonymous user.
+        session_destroy();
+        drupal_goto();
+
+      }
+
+      //if they are impersonating but not billing only it makes little sense as thats the only reason to impersonate. So switch back.
+      if(!in_array('billing_only', $user->roles) && $impersonating==true){
+        impersonate_log($r_uid,$user->uid,"An authenicated user was impersonating a user that was not marked as billing only. For security reasons they were switched back.");
+        impersonate_switch_back();
+      }
+
+      //confirm they are an admin of the billing user's gid.
+      $billingGID = organization_control_orgID($user);
+      if(!organization_control_is_group_admin($billingGID,$r_uid)){
+        //Security issue, group missmatch.
+        impersonate_log($r_uid,$user->uid,"An authenicated user was impersonating a user that was in a different group. For security reasons they were switched back.");
+        impersonate_switch_back();
+      }
+
+    }
+}
+
+/*
+ * Custom permissions needed for this module
+*/
+function dl_billing_management_permission(){
+  return array(
+    'create offline orders' => array(
+      'title' => t('Create Offline Orders'),
+      'description' => t('Allow user to create offline orders and licenses.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ */
+function dl_billing_management_cron_queue_info() {
+   $queues = array();
+//   $queues['renewal_upcoming_emails'] = array(
+//     'worker callback' => 'c', //function to call for each item
+//     'time' => 60, //seconds to spend working on the queue
+//   );
+//   return $queues;
+  $queues['expire_licenses'] = array(
+    'worker callback' => 'dl_billing_management_expire_by_license_id', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  $queues['confirm_subscription_roles'] = array(
+    'worker callback' => 'dl_billing_management_activate_group_users', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  $queues['revoke_subscription_roles'] = array(
+    'worker callback' => 'dl_billing_management_deactivate_group_users', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  $queues['revoke_subscription_roles_user'] = array(
+    'worker callback' => 'dl_billing_management_deactivate_users', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  $queues['analyze_for_nobilling_revoke_subscription_roles'] = array(
+    'worker callback' => 'dl_billing_management_deactivate_analyze_for_nobilling', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  $queues['release_authorization'] = array(
+    'worker callback' => 'dl_billing_management_release_authorization', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  $queues['abandoned_cancel_group_billing'] = array(
+    'worker callback' => 'dl_billing_management_abandoned_groups_cancel_billing', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  $queues['check_for_adminless'] = array(
+    'worker callback' => 'dl_billing_management_adminless_groups_check_by_buid', //function to call for each item
+    'time' => 60, //seconds to spend working on the queue
+  );
+  return $queues;
+}
+
+/*
+*  Add to cron
+*/
+
+function dl_billing_management_cron(){
+  //Look for any licenses that should expires
+  //only run once a day and only at night
+  $cron_licenses_expire_lastrun = variable_get('cron_licenses_expire_lastrun',0);
+  if(!isset($cron_licenses_expire_lastrun) || is_null($cron_licenses_expire_lastrun) || $cron_licenses_expire_lastrun == ""){
+    $cron_licenses_expire_lastrun =0;
+  }
+  //only between 11pm and 1am PST,
+  if($cron_licenses_expire_lastrun < strtotime('-1 day') && (date('G')==23 || date('G')==0) ){
+    dl_billing_managment_licenses_expire_all();
+  }
+
+  //Confirm all users of orgs with active licenses have the subscriber role.
+  $cron_activation_all_lastrun = variable_get('cron_activation_all_lastrun');
+  if(!isset($cron_activation_all_lastrun) || is_null($cron_activation_all_lastrun) || $cron_activation_all_lastrun == ""){
+    $cron_activation_all_lastrun =0;
+  }
+  //only run once a day and only at night
+  //only between 1am and 3am PST,
+  if($cron_activation_all_lastrun < strtotime('-1 day') && date('G')>0 && date('G')<3){
+    //disabled for now.
+    dl_billing_management_subscriber_activation_all();
+  }
+
+  //Confirm all users without an organitztion or in an organization with an inactive licenses have the subscriber role revoked.
+  $cron_deactivation_all_lastrun = variable_get('cron_deactivation_all_lastrun');
+  if(!isset($cron_deactivation_all_lastrun) || is_null($cron_deactivation_all_lastrun) || $cron_deactivation_all_lastrun == ""){
+    $cron_deactivation_all_lastrun=0;
+  }
+  //only between 3am and 5am PST,
+  //only run once a day and only at night
+  if($cron_deactivation_all_lastrun < strtotime('-1 day') && date('G')>2 && date('G')<5 ){
+    //disabled for now.
+    dl_billing_management_subscriber_deactivation_all();
+  }
+
+  //lets do this every other cron run
+  $cron_release_free_trial_authorization_last_run = variable_get('cron_release_free_trial_authorization_last_run');
+  if(!isset($cron_release_free_trial_authorization_last_run) || is_null($cron_release_free_trial_authorization_last_run) || $cron_release_free_trial_authorization_last_run == ""){
+    $cron_release_free_trial_authorization_last_run=false;
+  }
+  if($cron_release_free_trial_authorization_last_run == false){
+    //release the authorizations made for free trials
+    dl_billing_management_release_free_trial_authorizations();
+  }else{
+    variable_set('cron_release_free_trial_authorization_last_run',false);
+  }
+
+  //Run these only on Production or they cause false negatives.
+  if (isset($_ENV['AH_SITE_ENVIRONMENT']) && $_ENV['AH_SITE_ENVIRONMENT']=='prod') {
+
+    //Confirm all users without an organitztion or in an organization with an inactive licenses have the subscriber role revoked.
+    $cron_abandoned_groups = variable_get('cron_abandoned_groups');
+    if(!isset($cron_abandoned_groups) || is_null($cron_abandoned_groups) || $cron_abandoned_groups == ""){
+      $cron_abandoned_groups=0;
+    }
+    //only between 3am and 5am PST,
+    //only run once a day and only at night
+    if($cron_abandoned_groups < strtotime('-1 day') && date('G')>17 && date('G')<20 ){
+      //disabled for now.
+      dl_billing_management_abandoned_groups();
+    }
+
+      //Confirm all users without an organitztion or in an organization with an inactive licenses have the subscriber role revoked.
+    $cron_adminless_groups = variable_get('cron_adminless_groups');
+    if(!isset($cron_adminless_groups) || is_null($cron_adminless_groups) || $cron_adminless_groups == ""){
+      $cron_adminless_groups=0;
+    }
+    //only between 3am and 5am PST,
+    //only run once a day and only at night
+    if($cron_adminless_groups < strtotime('-1 day') && date('G')>20 && date('G')<23 ){
+      //disabled for now.
+      dl_billing_management_adminless_groups();
+    }
+
+  }//end if prodution environment.
+
+}
+
+/*
+ * The page to manage your licesnse
+*/
+function dl_billing_management_license_page(){
+  //if they ha]e a billing uid, take them there.
+//  global $user;
+  //Output some general license info.
+//  $licenseInfo = organization_control_subscription_info($user);
+//  if($licenseInfo==false){
+//    drupal_goto('/my-organization/get-license');
+//  }
+//  else{
+    drupal_goto('/my-organization/my-license');
+//  }
+}
+
+/*
+ * The page to manage your licesnse
+*/
+function dl_billing_management_dashboard(){
+
+  global $user;
+  $status = '';
+  $seats = '';
+  $expires = '';
+  $autorenew = '';
+  $onlineStatus = '';
+  $pageTitle = t("Subscription Information");
+  $headerMarkup = "<h1>$pageTitle</h1>";
+  //get some general license info.
+  $licenseInfo = organization_control_subscription_info($user);
+
+  //it was assumed a failed order would have a revoked license. This has ended up not being true because:
+    //An admin may have granted a license temporarly
+    //During launch we were not running the cron to revoke licenses
+    //Could just be timing till the next cron run.
+  //Therefore even if its an active license, Confirm the order status.
+  if($licenseInfo!=false && $licenseInfo['online']==1){
+    $query = db_select('field_data_cl_billing_license','bl');
+    $query->condition('bl.cl_billing_license_target_id',$licenseInfo['license_id']);
+    $query->join('commerce_line_item','li','li.line_item_id = bl.entity_id');
+    $query->join('commerce_order','o','o.order_id = li.order_id');
+    $query->range(0,1);
+    $query->orderby('bl.entity_id','DESC');
+    $query->fields('o',array('status'));
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      $orderStatus = $r['status'];
+    }
+  }
+
+  //if false, then show marketing
+   if($licenseInfo==false || ($licenseInfo['online']==1 && $orderStatus != 'recurring_open' )){
+    //determine if there was a previous online order that could be renewed.
+    //also get the date it expired
+    $query = db_select('commerce_order','o');
+    $query->condition('o.uid',$user->uid);
+    $query->condition('o.status',array('recurring_open'),'NOT IN');
+    $query->condition('o.type',array('recurring'));
+    $query->fields('o',array('order_id','status'));
+    $query->join('commerce_line_item','li',"li.order_id = o.order_id and li.type !='commerce_discount'");
+    $query->join('field_data_cl_billing_license','bl','bl.entity_id = li.line_item_id');
+    $query->join('commerce_license','l','l.license_id = bl.cl_billing_license_target_id');
+    $query->join('field_data_field_additional_seats','s','s.entity_id = l.product_id');
+    $query->join('field_data_field_total_seats','ts','ts.entity_id = s.field_additional_seats_tid');
+    $query->fields('l',array('expires','status'));
+    $query->fields('ts',array('field_total_seats_value'));
+    $query->range(0,1);
+    $query->orderBy('o.order_id','DESC');
+    $results = $query->execute();
+    $r_order = 0;
+    while($r = $results->fetchAssoc()){
+        $r_order = $r['order_id'];
+        $r_status = $r['status'];
+        $expiredDate = $r['expires'];
+        $seats = $r['field_total_seats_value'];
+    }
+    //if the billing cycle is not set to renew, prompt that it will be
+    if($r_order!=0){
+      if($expiredDate<time()){
+        $status = "Expired";
+      }else{
+        $status = "Active";
+      }
+      $onlineStatus = "Online";
+      $autorenew = "False";
+      $expires = date("M d Y",$expiredDate);
+      $seats = $seats;
+      if($r_status=="completed" && $expiredDate>time()){
+        $headerMarkup .= "<div class='error'>
+              Your subscription has been deactivated, click 'Reactivate' to re-enable your teams premium access.
+          </div>
+        ";
+      }else{
+        $headerMarkup .= "<div class='error'>To renew your subscription:<br>
+            Update your credit card information below then click the reactivate button.
+          </div>
+        ";
+      }
+    }
+    else{
+      $status = "No License";
+      $onlineStatus = "N/A";
+      $autorenew = "False";
+      $expires = "N/A";
+      $seats = "N/A";
+    }
+  }
+  else{
+    $status = "Active";
+    $seats = $licenseInfo['field_total_seats_value'];
+    if($licenseInfo['online']==0){
+      $onlineStatus = "Offline";
+      $autorenew = "N/A";
+    }else{
+      if($licenseInfo['autorenew']==1){
+        $autorenew =  "On";
+      }else{
+        $autorenew =  "Off";
+      }
+      $onlineStatus = "Online";
+    }
+    $expires = date("M d Y",$licenseInfo['expires']);
+  }
+
+  $headerMarkup .= "
+    <p>Status: $status<br />
+      Seats: $seats <br />
+      Expiration On: $expires<br />
+      Autorenew: $autorenew<br />
+  ";
+  if($onlineStatus=="Offline"){
+    $headerMarkup .= "Your license was purchased offline from atdove.org. Please <a href='/contact-us'>contact us</a> directly for billing support.<br />";
+  }
+
+  $headerMarkup .= "
+    </p>
+  ";
+  $output['currentInfo'] = array(
+    '#type' => 'markup',
+    '#markup' => $headerMarkup,
+    '#weight' => '-30'
+  );
+
+  //Show the reactivate button in certain circumstances.
+  if($status=="Expired" || ($status=="Active" && isset($r_status) && $r_status=="completed" )){
+    $output['reactivate'] = array(
+      '#type' => 'markup',
+      '#markup' => "<p><a href='/my-organization/reactivate-license' class='button-affirmative'>Reactivate</a></p>",
+      '#weight' => '-20'
+    );
+  }
+
+  //Allow autorenew to be canceled
+  if($licenseInfo['autorenew']==1 && $licenseInfo['online']==1){
+    $output['dl_billing_management_dont_renew'] = drupal_get_form('dl_billing_management_dont_renew_form');
+    $output['dl_billing_management_dont_renew']['#weight'] = '-10';
+  }
+
+  //If online 50 monthly, prompt to upgrade to yearly
+  if(isset($licenseInfo['product_id']) && $licenseInfo['product_id']==5){
+    $output['upgrade'] = array(
+      '#type' => 'markup',
+      '#markup' => "<p><a href='/my-organization/monthly-to-yearly' class='button-affirmative'>Upgrade to a Yearly Subscription</a><br />Save over $100/yr with a Yearly Subscription.</p>",
+      '#weight' => '-8'
+    );
+  }
+
+  //Manage Current Licenses
+  $myLicenses_view = views_embed_view('my_licenses', 'block');
+  $output['dl_billing_management_cancel_license_form'] = array(
+    '#type' => 'markup',
+    '#markup' => $myLicenses_view,
+    '#weight' => '-5'
+  );
+
+  //Remove or Modify C.C.
+  //if card on file is used
+  if(module_exists('commerce_cardonfile')){
+    $cardOnFile_view = views_embed_view('commerce_card_on_file_user_cards', 'block_1');
+    $output['dl_billing_management_remove_cardOnFile'] = array(
+      '#type' => 'markup',
+      '#markup' => $cardOnFile_view,
+      '#weight' => '0'
+    );
+  }
+
+  //Add a new card on file.
+  if(module_exists('commerce_cardonfile')){
+    //only if their is a billing user
+      $output['dl_billing_management_add_cardOnFile'] = array(
+        '#type' => 'markup',
+        '#markup' => "<p>".l(t('Add a New Credit Card'),'user/'.$user->uid.'/cards/add/Zv86GX2I2DTeXevedUYrgtg4gSjSQkQQ3m-N9VUGfd4')."</p>",
+        '#weight' => '4'
+      );
+  }
+
+  //review past transactions.
+  //Manage Current Licenses
+  $myTransactions_view = views_embed_view('transaction_history', 'block_1');
+  $output['dl_billing_management_past_transactions'] = array(
+    '#type' => 'markup',
+    '#markup' => $myTransactions_view,
+    '#weight' => '5'
+  );
+
+  return $output;
+}
+
+/*
+* Returns order ids of transactions for current user
+*/
+function dl_billing_management_get_transaction_history() {
+  $buid = organization_control_subscriber_uid();
+  $orderids = array();
+  $query = db_select('commerce_order', 'o');
+  $query->condition('o.uid', $buid);
+  $query->fields('o', array('order_id'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()) {
+    $orderids[] = $r['order_id'];
+  }
+  $orders = implode(",", $orderids);
+  return $orders;
+}
+
+/*
+* A access check to confirm a user is the admin of the team in which a transaction belongs.
+*/
+function dl_billing_management_transaction_admin($transaction_id, $acct = null){
+  //if an account was not sent, default to the current user
+  if($acct == null || user_load($acct->uid)==false){
+    global $user;
+    $acct = $user;
+  }
+  //find the transaction's (order) owner's group
+  $transaction = commerce_payment_transaction_load($transaction_id);
+  $order = commerce_order_load($transaction->order_id);
+  $order_gid = organization_control_orgID(user_load($order->uid));
+  //find the account's group.
+  $acct_gid = organization_control_orgID($acct);
+  //if there was a probably finding either group, return an error.
+  if(!is_numeric($transaction_id) ||!is_numeric($order_gid) ||!is_numeric($acct_gid) || $transaction_id==0 || $order_gid==0 || $acct_gid==0 || $order==0){
+    drupal_set_message('There was a issue looking up the details of this transaction.','error');
+    return false;
+  }
+  //Error if not the same.
+  if($order_gid != $acct_gid){
+    drupal_set_message('There was a permission error with this transaction.','error');
+    return false;
+  }
+  //Error if not an admin
+  if(!organization_control_is_group_admin($order_gid)){
+    return false;
+  }
+  return true;
+}
+
+/*
+* A page to show a transaction's details in a printable way.
+*/
+function dl_billing_management_transaction_details($transaction_id, $acct = null){
+  $transaction = commerce_payment_transaction_load($transaction_id);
+  $order = commerce_order_load($transaction->order_id);
+  //the product associated with this order is not loaded in the above objects. We will just query for it.
+  $query = db_select('commerce_line_item','li');
+  $query->condition('li.order_id',$order->order_id);
+  $query->condition('li.type','commerce_discount',"!=");
+  $query->join('field_data_commerce_product','op',"op.entity_id=li.line_item_id");
+  $query->join('commerce_product','p',"p.product_id=op.commerce_product_product_id");
+  $query->join('field_data_field_additional_seats','ps',"ps.entity_id=p.product_id");
+  $query->join('field_data_field_total_seats','s',"s.entity_id=ps.field_additional_seats_tid");
+  //Get the Product Name
+  $query->fields('p',array('title'));
+  //Get the seat count
+  $query->fields('s',array('field_total_seats_value'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $seatCount = $r['field_total_seats_value'];
+    $productTitle = $r['title'];
+  }
+  $header = "
+    <h1>Transaction Details</h1>
+    <p>Back to <a href='/my-organization/license'>My Subscription</a></p>
+  ";
+  $output['header'] = array(
+    '#type' => 'markup',
+    '#markup' => $header,
+    '#weight' => '-30'
+  );
+  $tableHeader = array(
+    "",
+    "",
+  );
+  $row[] = array(
+    "Transaction ID",
+    $transaction_id,
+  );
+  $row[] = array(
+    "Order ID",
+    $order->order_id,
+  );
+  $row[] = array(
+    "Date",
+    date("M d, Y",$transaction->created),
+  );
+  $row[] = array(
+    "Amount",
+    money_format('$%i',($transaction->amount/100)),
+  );
+  $row[] = array(
+    "Product",
+    $productTitle,
+  );
+
+  $row[] = array(
+    "Seat Limit",
+    $seatCount,
+  );
+  $output['transactionDetails'] = array(
+    '#theme' => 'table',
+    '#header' => $tableHeader,
+    '#rows' => $row,
+  );
+  return $output;
+
+}
+
+/*
+* A page to encourge buying a license for orphaned users
+*/
+function dl_billing_management_get_license_page(){
+  $markup = "
+    <h1>Licenses</h1>
+    <p><a href='#'>Get a License</a> (coming soon) please <a href='/contact-us'>contact us</a> for assistance.</p>
+  ";
+  $output['advertising'] = array(
+    '#type' => 'markup',
+    '#markup' => $markup,
+    '#weight' => '-30'
+  );
+  return $output;
+}
+
+/*
+ * provide blocks
+ */
+function dl_billing_management_block_info(){
+  $blocks = array();
+  $blocks['subscription_issue'] = array(
+    'info' => t('Subscription Issue'),
+    'region' => 'pop_notifications_section',
+    'status' => '1',
+    'visibility' => 'BLOCK_VISIBILITY_PHP',
+    'pages' => "<?php return dl_billing_management_biling_subscription_block_check('<front>|/all|/my-organization/my-license|my-organization/license'); ?>",
+
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  return $blocks;
+}
+
+/*
+ * provide block details
+ */
+
+function dl_billing_management_block_view($delta = ''){
+  $block = array();
+  switch ($delta) {
+    case 'subscription_issue':
+      $block['subject'] = '';
+      $block['content'] = dl_billing_management_biling_subscription_check_content();
+    break;
+  }
+  return $block;
+}
+
+/*
+ * booleen check for the block visibility.
+ * if there is an issue with the orgs current subscription.
+ * $paths - if set, this is a list of allowed paths delimted by a bar |. the front page can be passeed as <front>
+ */
+function dl_billing_management_biling_subscription_block_check($paths = null){
+  //don't show for anon users
+  if(organization_control_user_has_role('administrator') || organization_control_user_has_role('anonymous user')){
+    return false;
+  }
+
+  //confirm the path
+  if(!is_null($paths)){
+
+    //put the allowed paths in an array
+    $allowedPaths = explode("|",$paths);
+
+    //get the current path
+    $currPath = request_path();
+
+    //guilty until proven innocent.
+    $pathError = true;
+    //if the current path is not the allowed list.
+    if(in_array($currPath, $allowedPaths)){
+      $pathError = false;
+    }
+    //if the current path is not the allowed list.
+    if($pathError==true && in_array('<front>',$allowedPaths) && $currPath == "" ){
+       $pathError = false;
+    }
+
+    //hard code this path as the wild card was a pain
+    if($pathError==true && strpos($currPath, 'user-profile')!==false){
+       $pathError = false;
+    }
+    //if the path was never found, return false.
+    if ($pathError == true){
+      return false;
+    }
+  }
+
+  return dl_billing_management_biling_subscription_check();
+
+}
+
+/*
+ * booleen check if there is an issue with the orgs current subscription.
+ */
+function dl_billing_management_biling_subscription_check(){
+  //get some general license info.
+  $licenseInfo = organization_control_subscription_info();
+  //if this returns false, there is an issue.
+  if($licenseInfo==false){
+    return true;
+  }
+
+  //it was assumed a failed order would have a revoked license. This has ended up not being true because:
+    //An admin may have granted a license temporarly
+    //During launch we were not running the cron to revoke licenses
+    //Could just be timing till the next cron run.
+  //Therefore even if its an active license, Confirm the order status.
+  if($licenseInfo!=false && $licenseInfo['online']==1){
+    $query = db_select('field_data_cl_billing_license','bl');
+    $query->condition('bl.cl_billing_license_target_id',$licenseInfo['license_id']);
+    $query->join('commerce_line_item','li','li.line_item_id = bl.entity_id');
+    $query->join('commerce_order','o','o.order_id = li.order_id');
+    $query->fields('o',array('status'));
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      $orderStatus = $r['status'];
+    }
+  }
+
+  //if online but the order status is not open (probably declined), there is an issue.
+  if($licenseInfo['online']==1 && $orderStatus != 'recurring_open' && $orderStatus != 'completed'){
+    return true;
+  }
+
+  return false;
+
+}
+
+/*
+ * messages if there is an issue with the orgs current subscription.
+ */
+function dl_billing_management_biling_subscription_check_content(){
+  global $user;
+  if(organization_control_is_group_admin(organization_control_orgID($user),$user->uid)){
+    $msg = '<h3>Subscription Notice</h3><p>There is an issue with your team\'s subscription. Please check your '.l('subscription information','my-organization/license').'.</p>';
+  }
+  else{
+    $msg = '<h3>Subscription Notice</h3><p>You do not belong to an active account. Please '.l('contact us','/contact-us').' if you have any questions.</p>';
+  }
+
+  $output['markup'] = array(
+    '#type' => 'markup',
+    '#markup' => $msg,
+    '#weight' => '10'
+  );
+  return $output;
+}
+
+/*
+ * A form to cancel an active license
+*/
+function dl_billing_management_dont_renew_form($form, &$form_state){
+  $form['submit_cancel_license'] = array(
+    '#type' => 'button',
+    '#value' => t('Cancel Renewal'),
+    '#weight' => -21,
+    '#attributes' => array(
+      'class' => array(
+        'button-negative',
+      ),
+      'id' => array(
+        'dont-renew',
+      ),
+    ),
+  );
+  $form['main_reason_message'] = array(
+    '#markup' => '<div class="notice why-not"><p>Please confirm you wish to cancel renewal.</p></div><p class="why-not">What is the main reason you want to cancel your atdove.org membership?*</p>',
+    '#weight' => -20,
+  );
+  $form['main_reason'] = array(
+    '#type' => 'select',
+    '#weight' => -19,
+    '#options' => array(
+        0=>t('It’s too expensive'),
+        1=>t('I graduated or changed employment'),
+        2=>t('Just not using it'),
+        3=>t('We’re switching to a different service'),
+        4=>t('Missing feature(s) I need'),
+        5=>t('I’ve had issues with the site'),
+        6=>t('This is a duplicate account'),
+        7=>t('Not enough CE available'),
+        8=>t('Other'),
+    ),
+    '#attributes' => array(
+      'class' => array(
+        'why-not',
+      ),
+    ),
+    '#required' => TRUE,
+  );
+  $form['why_not_message'] = array(
+    '#markup' => '<p class="why-not">Additional comments:</p>',
+    '#weight' => -18,
+  );
+  $form['why_not'] = array(
+    '#type' => 'textarea',
+    '#weight' => -17,
+    '#resizable' => FALSE,
+    '#attributes' => array(
+      'class' => array(
+        'why-not',
+      ),
+    ),
+  );
+  $form['submit_cancel_license_final'] = array(
+    '#type' => 'submit',
+    '#value' => t('Proceed with cancellation'),
+    '#weight' => -16,
+    '#attributes' => array(
+      'class' => array(
+        'button-negative',
+      ),
+      'id' => array(
+        'dont-renew-final',
+      ),
+    ),
+  );
+
+  return $form;
+}
+
+/*
+ * Validate the form to cancel an active license
+*/
+function dl_billing_management_dont_renew_form_validate($form, &$form_state){
+  //Does this user have the rights to cancel this license. Are they a group admin
+  Global $user;
+  $currOrg = organization_control_orgID($user);
+  if(!organization_control_is_group_admin($currOrg,$user->uid)){
+    form_set_error('submit_cancel_license','You do not have permission to cancel this license.');
+  }
+
+  if( empty($form_state['values']['main_reason']) ) {
+    //This form has some jquery functionality that seems to bloc kthe standard form_set_error message. Use drupal_set_message instead.
+    //form_set_error('main_reason','Please select a reason you wish to cancel your subscription.');
+    drupal_set_message("Please try again. To successfully process your renewal, please select a reason for cancellation. Thank you!",'error');
+  }
+
+}
+
+/*
+ * Submit handler for the form to cancel an active license
+*/
+function dl_billing_management_dont_renew_form_submit($form, &$form_state){
+  //look up the any licesnses this users has and cancel them.
+  //They should only have one.
+  //Can no think of a realistic use case for having multiple licenses and deletling a specific one
+  //So if there happens to be more than one this is a good time to clean that up.
+  global $user;
+  //Output some general license info.
+  $licenseInfo = organization_control_subscription_info($user);
+  $billingCycles = array();
+  //Turn off all billing cycles.
+  $query = db_select('commerce_order','o');
+  $query->fields('o',array('order_id'));
+  $query->condition('o.uid',$licenseInfo['currentSubscriber']->uid);
+  $query->condition('o.type',"recurring");
+  $results = $query->execute();
+  while($r=$results->fetchAssoc()){
+    $subquery = db_select('field_data_cl_billing_cycle','bli');
+    $subquery->fields('bli',array('cl_billing_cycle_target_id'));
+    $subquery->condition('bli.entity_id',$r['order_id']);
+    $subresults = $subquery->execute();
+    while($sr=$subresults->fetchAssoc()){
+      $billingCycles[$sr['cl_billing_cycle_target_id']] = $sr['cl_billing_cycle_target_id'];
+    }
+  }
+  if(count($billingCycles)>0){
+    $update = db_update('cl_billing_cycle');
+    $update->fields(array(
+      'status' => '0',
+    ));
+    $update->condition('billing_cycle_id',$billingCycles,'IN');
+    $update->execute();
+  }
+
+  //Complete the orders.
+  $query = db_select('commerce_order','o');
+  $query->fields('o',array('order_id'));
+  $query->condition('o.uid',$licenseInfo['currentSubscriber']->uid);
+  $query->condition('o.status',array('pending','recurring_open'),'IN');
+  $results = $query->execute();
+  while($r=$results->fetchAssoc()){
+    $orderID = $r['order_id'];
+    //this is the product order
+    $order = commerce_order_load($orderID);
+    //cancel the main order
+    commerce_order_status_update($order, 'completed');
+  }
+  drupal_set_message('Thank you. Your feedback is extremely important to us.');
+
+  // email info@atdove.org about the non-renewal.
+  $why_not = check_plain($form_state['input']['why_not']);
+  $main_reason_id = $form_state['input']['main_reason'];
+  if(is_numeric($main_reason_id)){
+    $main_reason = check_plain($form_state['complete form']['main_reason']['#options'][$main_reason_id]);
+  }
+  else {
+    $main_reason = "User did not select a reason.";
+  }
+
+  $org_id = organization_control_orgID();
+  $org_name = organization_control_orgName();
+  $from = 'no-reply@atdove.org';
+  $subject = 'Renewal stop notification';
+  $body = $org_name . ' has elected not to renew their license.';
+  if (!empty($main_reason)) {
+    $body .= "<br>Main Reason: $main_reason";
+  }
+  else {
+    $body .= "<br>Main Reason: No option was selected.";
+  }
+  if (!empty($why_not)) {
+    $body .= "<br>Additional info: $why_not";
+  }
+  else {
+    $body .= "<br>Additional info: No additional text was entered.";
+  }
+
+  $body .= "<table border=\"1\"><caption>Account Data</caption>";
+  $body .= "<tr><td>ORG ID</td><td>" . $org_id . "</td></tr>";
+  $body .= "<tr><td>ORG NAME</td><td>" . $org_name . "</td></tr>";
+  $body .= "<tr><td>Billing User</td><td>" . $user->name . "</td></tr>";
+  $body .= "<tr><td>Order Id</td><td>" . $orderID . "</td></tr>";
+  $body .= "<tr><td>License Id</td><td>" . $licenseInfo['license_id'] . "</td></tr>";
+  $body .= "<tr><td>License Type</td><td>" . $licenseInfo['commerce_license_duration_value'] . "</td></tr>";
+  $body .= "<tr><td>Seats</td><td>" . $licenseInfo['field_total_seats_value'] . "</td></tr>";
+  $body .= "</table>";
+
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  $to = 'info@atdove.org';
+  $message = drupal_mail('dl_billing_management', 'dont_renew', $to, language_default(), $params, $from);
+  $li = $licenseInfo['commerce_license_duration_value'];
+  $lv = $licenseInfo['field_total_seats_value'];
+  $wdmsg = "$org_name ($org_id) with the billing user $user->name canceled their $li account with $lv seats.";
+  watchdog('Account Canceled', $wdmsg, array(),WATCHDOG_NOTICE);
+
+}
+
+function dl_billing_management_cancel_renewal_and_order($buid){
+
+  $bu = user_load($buid);
+  //Output some general license info.
+  $licenseInfo = organization_control_subscription_info($bu);
+  $billingCycles = array();
+  //Turn off all billing cycles.
+  $query = db_select('commerce_order','o');
+  $query->fields('o',array('order_id'));
+  $query->condition('o.uid',$buid);
+  $query->condition('o.type',"recurring");
+  $results = $query->execute();
+  while($r=$results->fetchAssoc()){
+    $subquery = db_select('field_data_cl_billing_cycle','bli');
+    $subquery->fields('bli',array('cl_billing_cycle_target_id'));
+    $subquery->condition('bli.entity_id',$r['order_id']);
+    $subresults = $subquery->execute();
+    while($sr=$subresults->fetchAssoc()){
+      $billingCycles[$sr['cl_billing_cycle_target_id']] = $sr['cl_billing_cycle_target_id'];
+    }
+  }
+  if(count($billingCycles)>0){
+    $update = db_update('cl_billing_cycle');
+    $update->fields(array(
+      'status' => '0',
+    ));
+    $update->condition('billing_cycle_id',$billingCycles,'IN');
+    $update->execute();
+  }
+
+  //Complete the orders.
+  $query = db_select('commerce_order','o');
+  $query->fields('o',array('order_id'));
+  $query->condition('o.uid',$buid);
+  $query->condition('o.status',array('pending','recurring_open'),'IN');
+  $results = $query->execute();
+  while($r=$results->fetchAssoc()){
+    $orderID = $r['order_id'];
+    //this is the product order
+    $order = commerce_order_load($orderID);
+    //cancel the main order
+    commerce_order_status_update($order, 'completed');
+  }
+
+}
+
+/*
+ * A page to let users switch to yearly billing
+*/
+function dl_billing_management_monthly_to_yearly_page(){
+  //start some variables.
+  $message = "";
+  $outputTop ="";
+  $outputBody = "";
+  $error = false;
+  //look up some variables.
+  global $user;
+  $subscription_info = organization_control_subscription_info($user);
+  if($subscription_info != false){
+   $r_order_id = dl_billing_management_get_r_order_id_by_license_id($subscription_info['license_id']);
+  }
+  //if there was not a recurring order found, its probably an offline order. Regardless, there is no reason to be here.
+  //if they don't have an active subscription. Suggest they fix that first.
+  if($subscription_info == false || $r_order_id==false){
+    $errorMsg = "There is an issue with your current subscription. Please visit the <a href='/my-organization/license'>My Subscription</a> page and correct that issue.";
+    $outputTop .= "<h1>Upgrade to a Yearly Subscription</h1>";
+    $output['outputTop'] = array (
+      '#type' => 'markup',
+      '#markup' => $outputTop,
+    ) ;
+    $output['error'] = array (
+      '#type' => 'markup',
+      '#markup' => $errorMsg,
+      '#prefix' => "<div class='error'>",
+      '#suffix' => "</div>",
+    );
+    return $output;
+  }
+  //if its not the monthly 50 prod they can not upgrade without calling
+  if($subscription_info['product_id']!=5){
+    $errorMsg = "Your current subscription type cannot be upgraded online. Please <a href='/contact-us'>Contact Us</a> for assistance.";
+    $outputTop .= "<h1>Upgrade to a Yearly Subscription</h1>";
+    $output['outputTop'] = array (
+      '#type' => 'markup',
+      '#markup' => $outputTop,
+    ) ;
+    $output['error'] = array (
+      '#type' => 'markup',
+      '#markup' => $errorMsg,
+      '#prefix' => "<div class='notice'>",
+      '#suffix' => "</div>",
+    );
+    return $output;
+
+  }
+
+  $r_order = commerce_order_load($r_order_id);
+  //start some output messages.
+  $outputTop .= "<h1>Upgrade to a Yearly Subscription</h1>";
+  $outputBody .= "
+    <h2>Save over $100/yr by switching from a monthly to a yearly subscription. </h2>
+    <p>At your next renewal (".date('M d',$subscription_info['expires']).") your subscription will be converted from a monthly to a yearly subscription and renewed for $349.</p>
+  ";
+  //if the current order is in a grace period, prompt that they should review their card on file.
+  if($r_order->status != "completed" && $r_order->status != "recurring_open"){
+    $message .= "
+      There may be an issue with your current subscription. You may proceed and switch to a yearly subscription.<br /><br />You should also review your payment infomation on the <a href='/my-organization/license'>My Subscription</a> page.
+    ";
+  }
+
+  $output['outputTop'] = array (
+    '#type' => 'markup',
+    '#markup' => $outputTop,
+  );
+  if($message != ""){
+    $output['message'] = array (
+      '#type' => 'markup',
+      '#markup' => $message,
+      '#prefix' => "<div class='error'>",
+      '#suffix' => "</div>",
+    );
+  }
+  $output['outputBody'] = array (
+    '#type' => 'markup',
+    '#markup' => $outputBody,
+  );
+  //show upgrade button.
+  $output['upgrade'] = drupal_get_form('dl_billing_management_monthly_to_yearly_form');
+  return $output;
+}
+
+/*
+ * Form to allow team admins to move from monthly billing to yearly.
+*/
+function dl_billing_management_monthly_to_yearly_form($form,$form_state){
+  $form['toYearly'] = array (
+    '#type' => 'submit',
+    '#value' => t('Yes, Upgrade to a Yearly Subscription'),
+    '#attributes' => array(
+      'class' => array(
+        'button-affirmative'
+      )
+    )
+  );
+  return $form;
+}
+
+/*
+ * Form -validate- to allow team admins to move from monthly billing to yearly.
+*/
+function dl_billing_management_monthly_to_yearly_form_validate(&$form,&$form_state){
+  //get some info.
+  global $user;
+  $orgID = organization_control_orgID($user);
+  $subscription_info = organization_control_subscription_info($user);
+  if($subscription_info != false){
+   $r_order_id = dl_billing_management_get_r_order_id_by_license_id($subscription_info['license_id']);
+  }
+  //Is this a team admin.
+  if(!organization_control_is_group_admin($orgID,$user->uid)){
+    form_set_error('toYearly','You do not have the proper permissions to upgrade this account. ');
+  }
+  //do they have an active license
+  if($subscription_info==false){
+    form_set_error('toYearly','You do not have an active subscription that can be upgraded. ');
+  }
+  //is the product upgradeable.
+  if($subscription_info['product_id']!=5){
+    form_set_error('toYearly','You do not have an current subscription type that can be upgraded. ');
+  }
+  $form_state['redirect'] = 'my-organization/my-license';
+}
+
+/*
+ * Form -validate- to allow team admins to move from monthly billing to yearly.
+*/
+
+function dl_billing_management_monthly_to_yearly_form_submit(&$form,&$form_state){
+  //look up some variables.
+  global $user;
+  $subscription_info = organization_control_subscription_info($user);
+  $r_order_id = dl_billing_management_get_r_order_id_by_license_id($subscription_info['license_id']);
+  $r_order = commerce_order_load($r_order_id);
+
+  //load the new product
+  $new_product = commerce_product_load(1);
+  $new_product_id = 1;
+  //load the current billing cycle
+  $billing_cycle_id = $r_order->cl_billing_cycle['und'][0]['target_id'];
+  $billing_cycle = entity_load_single('cl_billing_cycle', $billing_cycle_id);
+  $billing_cycle->type = 'yearly';
+  //if the billing cycle was not set to renew, it makes no sense to go through this exercise.
+  if($billing_cycle->status!=1){
+    $billing_cycle->status = 1;
+  }
+  if($billing_cycle->expires<time()){
+    $billing_cycle->expires = time();
+  }
+  $billing_cycle->save();
+  //change the licenses product.
+  $licenses = commerce_license_get_order_licenses($subscription_info['orderID']);
+  foreach($licenses as $l){
+    $l->product_id = $new_product_id;
+    if($l->expires<time()){
+      $l->expires = time();
+    }
+    $l->save();
+  }
+  if($r_order->status != 'recurring_open'){
+    //reset the order status.
+    commerce_order_status_update($r_order, 'recurring_open');
+  }
+
+  drupal_set_message('Thank You! At your next renewal ('.date('M/d/y',$subscription_info['expires']).') your team will renew to an annual subscription.');
+}
+
+/**
+ * Get a unique id used for billing user names and emails.
+ *
+ * @TODO: Why is the dl_billing_ubid table necessary?
+ * @TODO: Shouldn't we be using uid from users table instead of email in case we need the relationship between
+ * this table and the users table? Email can be changed but uid can't.
+ * @TODO: This function is confusingly named. It doesn't "get" an existing id, but instead
+ * inserts a new row in dl_billing_ubid and returns the id of the new row.
+ *
+ * @param $email (Optional)
+ *   an email address to mark this buid with.
+ *
+ * @return
+ *   Unique Integer
+ */
+function dl_billing_management_get_ubid($email = null){
+  //If we use variable_get() and variable_set() we can not get the current value and increment in the same transaction. This would create the small posiiblity of an id not being unique.
+  //We will update the db directly so we can do this in one transaction.
+  $ubid = db_insert('dl_billing_ubid')->fields(array('mail' => $email,'timestamp' => REQUEST_TIME,))->execute();
+  return  $ubid;
+}
+
+/**
+ * Generate a unique id for a billing user to be created with.
+ *
+ * @param $email
+ *   The user ID in which a buid is being sought.
+ *
+ * @return
+ *   Unique Integer (UID)
+ */
+function dl_billing_management_get_ubid_for_rule_action($email = null){
+  return array('ubid' => dl_billing_management_get_ubid($email));
+}
+/**
+ * Look up if this user has been assigned a billing user.
+ * If one exists, return its UID
+ * If one does not exist, create one and return its UID.
+ *
+ * @param $user
+ *   The user for which a buid is being sought.
+ *
+ * @return
+ *   Unique Integer (UID)
+ */
+function dl_billing_management_get_billing_user_rule_action($user = null){
+  // @TODO: What is the purpose of the dl_billing_ubid table?
+  // All it does is store an email address and a timestamp. This code takes an existing Drupal user's email address,
+  // inserts it into that table then returns the id of the row. It then takes that id, concatenates it in a couple
+  // times to create a new user name and email and then creates a new user in the users table.
+  // Nothing is every queried from the dl_billing_ubid table. Only inserted.
+  // Just why? Why store that if you're never going to query it?
+  // Why create a new user? Can't we mark the existing user in the user table as the billing user?
+  // What is the purpose of the billing_only user role?
+  if(isset($user->uid) && $user->uid > 1){
+    $buid = organization_control_subscriber_uid($user);
+    if($buid!=false){
+      $b_user = user_load($buid);
+      return array('billing_user' => $b_user);
+    }
+  }
+  //create a billing user.
+  //get a billing ID
+  $ubid = dl_billing_management_get_ubid($user->mail);
+  //format the username
+  $name = "dlBillingUser+".$ubid;
+  //format the email address
+  $email = $name."@outlier.com";
+  $password = user_password(8);
+  $new_user = array(
+    'name' => $name,
+    'pass' => $password,
+    'mail' => $email,
+    'status' => 1,
+    'init' => 'import@outlier.com',
+    'roles' => array(
+      DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+      10 => 'billing_only',
+      6 => 'Subscriber',
+    ),
+  );
+  // The first parameter is sent blank so a new user is created.
+  $new_user = user_save('', $new_user);
+  return array('billing_user' => $new_user);
+}
+
+/**
+ * Look up if this user has been assigned to an organization.
+ * If one exists, return its GID/NID
+ * If one does not exist, create one and return its GID/NID.
+ *
+ * @param $user
+ *   The user for which an organization is being sought.
+ *
+ * @param $user
+ *   The user for which an organization is being sought.
+ *
+ * @return
+ *   Unique Integer (GID/NID)
+ */
+function dl_billing_management_get_organization_rule_action($user,$orgName){
+  //Does an organization exist?
+  $orgID = organization_control_orgID($user);
+  if($orgID != 0){
+    return array('orgID' => $orgID);
+  }
+  //Otherwise
+  //create an organization.
+  $org = dl_billing_management_create_org($orgName,$user->uid);
+  $orgID = $org->nid;
+
+  return array('orgID' => $orgID);
+
+}
+
+
+/*
+*
+*/
+function dl_billing_management_authenicate_user(EntityDrupalWrapper $acct){
+  Global $user;
+  $user = user_load($acct->getIdentifier());
+  return $user;
+}
+
+
+/*
+*
+*/
+function dl_billing_management_advance_free_trial($order){
+// Invoke the event including a hook of the same name.
+//  rules_invoke_all('commerce_payment_order_paid_in_full', $order, $transaction);
+  rules_invoke_all('commerce_checkout_complete', $order);
+
+  return true;
+}
+
+/*
+* If a coupon was applied to a free trial we want to apply it to the actual order.
+* This is actually the 2nd order. The first order was the free trial. We will use a conditional
+* to identify this this
+*   IF the order is set to charge the card for the first time (the other orders were authorize only)
+*/
+
+function dl_billing_management_does_order_get_coupon_from_free_trail($order){
+  //look up all recurring orders for this BUID besides this one. There should be only one
+  $query = db_select('commerce_order','o');
+  $query->condition('o.uid',$order->owner->value()->uid);
+  $query->condition('o.type','recurring');
+  $query->fields('o',array('order_id'));
+  $results = $query->execute();
+  //continue if only one was found
+  if($results->rowCount()==1){
+    //add contitional that it had a coupon.
+    //find the product order to which the recurring order was associated and a coupon may have been applied
+    //Note: We could have found this order and then used commerce_discount_usage_order_discounts() but since we were doing a query anyways, I did it with joins.
+    while($r = $results->fetchAssoc()){
+      $queryC = db_select('commerce_line_item','li');
+      $queryC->condition('li.order_id',$r['order_id']);
+      $queryC->condition('li.type','recurring');
+      $queryC->join('field_data_cl_billing_license','fbl','fbl.entity_id = li.line_item_id');
+      $queryC->join('field_data_commerce_license','fcl','fcl.commerce_license_target_id = fbl.cl_billing_license_target_id');
+      $queryC->join('commerce_line_item','li2','li2.line_item_id = fcl.entity_id');
+      $queryC->join('commerce_line_item','li3',"li3.order_id = li2.order_id AND li3.type = 'commerce_discount'");
+      $queryC->fields('li3',array('order_id'));
+      $resultsC = $queryC->execute();
+      if($resultsC->rowCount()>0){
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/*
+* Find the free trial order and the coupon that was used. Return that value so the actual
+* 1st renewal/real charge uses that amount.
+*/
+
+function dl_billing_management_get_discount_from_free_trial($order,$lineItem) {
+  //We will find the associated product ORDER_BGR
+  //look up all recurring orders for this BUID besides this one. There should be only one
+  $query = db_select('commerce_order','o');
+  $query->condition('o.uid',$order->uid);
+  $query->condition('o.type','recurring');
+  $query->fields('o',array('order_id'));
+  $query->range(0,1);
+  $query->orderby('o.order_id','ASC');
+  $results = $query->execute();
+  //continue if only one was found
+  if($results->rowCount()==1){
+    //add contitional that it had a coupon.
+    //find the product order to which the recurring order was associated and a coupon may have been applied
+    //Note: We could have found this order and then used commerce_discount_usage_order_discounts() but since we were doing a query anyways, I did it with joins.
+    while($r = $results->fetchAssoc()){
+      $queryC = db_select('commerce_line_item','li');
+      $queryC->condition('li.order_id',$r['order_id']);
+      $queryC->condition('li.type','recurring');
+      $queryC->join('field_data_cl_billing_license','fbl','fbl.entity_id = li.line_item_id');
+      $queryC->join('field_data_commerce_license','fcl','fcl.commerce_license_target_id = fbl.cl_billing_license_target_id');
+      $queryC->join('commerce_line_item','li2','li2.line_item_id = fcl.entity_id');
+      $queryC->join('commerce_line_item','li3',"li3.order_id = li2.order_id AND li3.type = 'commerce_discount'");
+      $queryC->fields('li3',array('order_id'));
+      $resultsC = $queryC->execute();
+      if($resultsC->rowCount()>0){
+        while($rC = $resultsC->fetchAssoc()){
+          $p_order_id = $rC['order_id'];
+        }
+      }
+      else{
+        return array('discount_amount' => 0);
+      }
+    }
+  }
+  $discounts = commerce_discount_usage_order_discounts($p_order_id);
+  if($discounts==0 || count($discounts)==0){
+      return array('discount_amount' => 0);
+  }
+  //find the order total and this product total. They should be the same as we only allow one product per order
+    //but we don't want to get to a negative number so this is just a double check.
+  $orderTotal = $order->commerce_order_total['und'][0]['amount'];
+  //we actually want the base price.
+  foreach($lineItem->commerce_total['und'][0]['data']['components'] as $component){
+    if($component['name']=='base_price')
+    $lineItemBasePrice = $component['price']['amount'];
+  }
+  $discountAmount = 0;
+
+  //cycle through all discounts
+  $discountsApplied = array();
+  foreach($discounts as $d){
+    $d_loaded = entity_load_single('commerce_discount', "$d");
+    $discount_wrapper = entity_metadata_wrapper('commerce_discount', $d_loaded);
+    $offer_wrapper = $discount_wrapper->commerce_discount_offer;
+    $offer_type = $offer_wrapper->type->value();
+    $discount_type = $discount_wrapper->type->value();
+    // Savings value implementations on behalf of commerce discount.
+    switch ($discount_type) {
+      case 'order_discount':
+        switch ($offer_type) {
+          case 'fixed_amount':
+            $price = $offer_wrapper->commerce_fixed_amount->value();
+            $price = $price['amount'];
+            if($price <= $lineItemBasePrice && $price <= $orderTotal && !in_array($d,$discountsApplied)){
+              $discountAmount += $price;
+              $discountsApplied[] = $d;
+            }
+          break;
+          case 'percentage':
+            $rate = $offer_wrapper->commerce_percentage->value();
+            $rateTotal = $lineItemBasePrice * ($rate/100);
+            if($rateTotal <= $lineItemBasePrice && $rateTotal <= $orderTotal && !in_array($d,$discountsApplied)){
+              $discountAmount += $rateTotal;
+              $discountsApplied[] = $d;
+            };
+          break;
+        }
+      break;
+    }
+  }
+  $discountAmount = round($discountAmount);
+  return array('discount_amount' => $discountAmount);
+}
+
+/*
+* Modify the coupon validation to enforce one coupon per order.
+*/
+
+function dl_billing_management_commerce_coupon_condition_outcome_alter(&$outcome, $context) {
+
+  $order_coupons = $context['order']->commerce_coupons->value();
+  $coupon = $context['coupon']->value();
+
+  // Validate only if the order doesn't contain other coupons
+  // or if the current coupon is the first one added to the order.
+  if (!empty($order_coupons) && ($order_coupons[0]->coupon_id !== $coupon->coupon_id)) {
+    drupal_set_message(t('You cannot use more than 1 coupon for the same order.'), 'warning');
+    $outcome = FALSE;
+  }
+
+}
+
+
+/*
+* This changes the payment method from an Auth Only menthod used on sign up to the
+* Auth and capture method used to really charge the card.
+*/
+function dl_billing_management_set_card_to_charge($uid){
+  //get the card on file.
+  $cards = commerce_cardonfile_load_multiple_by_uid($uid);
+  foreach($cards as $card){
+    $card->instance_id = 'authnet_aim|commerce_payment_authnet_aim';
+    commerce_cardonfile_save($card);
+  }
+  return true;
+}
+
+/*
+* Look up any online orders that are about to renew and return data about them.
+*/
+function dl_billing_management_send_renewal_upcoming_emails($days, $subject, $message){
+  $cutoff = time()+(60*60*24*$days);
+  //The account much be older than the free trial. Free trials are 7 days. I used '9' for comfort.
+  $freeTrialExlusion = time()-(60*60*24*9);
+  $data['subject'] = $subject;
+  $data['message'] = $message;
+  $data['from'] = 'info@outlier.com';
+  $operations = array();
+  $queue = DrupalQueue::get('renewal_upcoming_emails');
+  //We need:
+  $query = db_select('cl_billing_cycle','bc');
+  $query->condition('bc.end',$cutoff,'<');
+  $query->condition('bc.end',time(),'>');
+  $query->condition('bc.status',1);
+  $query->join('field_data_cl_billing_cycle','fbc','fbc.cl_billing_cycle_target_id = bc.billing_cycle_id');
+  $query->condition('bc.start',$freeTrialExlusion,'<');
+  $query->fields('fbc',array('entity_id'));
+  $query->fields('bc',array('uid'));
+  $results = $query->execute();
+  while($r=$results->fetchAssoc()){
+    $data['orderID'] = $r['entity_id'];
+    $data['buid'] = $r['uid'];
+    $acct = user_load($data['buid']);
+    //get buid
+    $gid = organization_control_orgID($acct);
+    //get admin emails
+    $emailArr = organization_control_list_group_admin_emails($gid);
+    foreach($emailArr as $email){
+      $data['email'] = $email;
+      $queue->createItem($data);
+    }
+  }
+}
+
+/**
+ * Batch Action Send Renewal Upcoming Emails
+ */
+function dl_billing_management_send_renewal_upcoming_emails_batch_actions($data){
+  $to = $data['email'];
+//   $data['message'].="<br />
+//
+//   Indend For: ".$to;
+//   $to = 'jed@outlier.com';
+  dl_billing_management_action_mail($to, $data['subject'], $data['message'], $data['from']);
+}
+
+/**
+ * Action Implementation: Send mail.
+ */
+function dl_billing_management_action_mail($to, $subject, $message, $from = NULL) {
+  $from = !empty($from) ? str_replace(array("\r", "\n"), '', $from) : NULL;
+  $params = array(
+    'subject' => $subject,
+    'message' => $message,
+    'langcode' => 'UND',
+  );
+  // Set a unique key for this mail.
+  $key = 'rules_action_mail_renewals_'.date('m_d_Y').'_'.time();
+  $message = drupal_mail('rules', $key, $to, language_default(), $params, $from);
+  if ($message['result']) {
+    watchdog('rules', 'Successfully sent email to %recipient', array('%recipient' => $to));
+  }
+}
+
+/*
+*
+*/
+function dl_billing_management_set_free_trial_duration($order){
+  $licenses = commerce_license_get_order_licenses($order);
+  foreach ($licenses as $license) {
+    $expirationDate = strtotime("+7 day");
+    $license->expires = $expirationDate;
+    $license->save();
+    //We also have to update the billing cycle. I can't find a provide method to do this.
+    //all the same I don't want to trigger a revision so I am just updating the database.
+
+    //find the billing cycle ID
+    $bc = commerce_license_billing_get_license_billing_cycle($license);
+
+    $update = db_update('cl_billing_cycle');
+    $update->fields(
+      array(
+        ' end' => $expirationDate,
+      )
+    );
+    $update->condition('billing_cycle_id',$bc->billing_cycle_id, '=');
+    $update->execute();
+    //It should be noted there is also this field. Though I don't think this field needs to be updated.
+    //field_data_cl_billing_end.cl_billing_end_value
+  }
+  return true;
+}
+
+/*
+* The provided OG rule to add a role would not work and provided no errors. So I handle it
+* it with a custom rule.
+*/
+function dl_billing_management_make_org_admin($uid,$gid){
+  //This user is becoming an admin of an organization. That og user role is 3.
+  $rid = 3;
+  og_role_grant('node',$gid, $uid,$rid);
+  return true;
+}
+/**
+ * Implement hook_rules_action_info().
+ */
+function dl_billing_management_rules_condition_info(){
+  return array(
+    'dl_billing_management_does_order_get_coupon_from_free_trail' => array(
+      'label' => t('Does Renewal Qualify For Coupon From Free Trail'),
+      'parameter' => array(
+        'entity' => array(
+          'type' => 'entity',
+          'label' => t('Entity'),
+          'description' => t('The order to check.'),
+        ),
+      ),
+      'group' => t('Commerce Discount'),
+    ),
+  );
+}
+/**
+ * Implement hook_rules_action_info().
+ */
+function dl_billing_management_rules_action_info() {
+  return array(
+    'dl_billing_management_get_ubid_for_rule_action' => array(
+      'label' => t('Get a unique billing id'),
+      'group' => t('Data'),
+      'parameter' => array(
+        'email' => array(
+          'type' => 'text',
+          'label' => t('Email'),
+          'description' => t('Log an email for this new ID.'),
+          'optional' => true,
+        ),
+      ),
+      'provides' => array(
+        'ubid' => array(
+          'type' => 'text',
+          'label' => t('Unique Billing ID'),
+        ),
+      ),
+    ),
+    'dl_billing_management_get_billing_user_rule_action' => array(
+      'label' => t('Find the existing billing user or create it'),
+      'group' => t('User'),
+      'parameter' => array(
+        'curr_user' => array(
+          'type' => 'entity',
+          'label' => t('User'),
+          'description' => t('The user for which a billing user is being sought.'),
+          'optional' => false,
+        ),
+      ),
+      'provides' => array(
+        'billing_user_uid' => array(
+          'type' => 'integer',
+          'label' => t('The Billing User UID'),
+        ),
+      ),
+    ),
+    'dl_billing_management_get_organization_rule_action' => array(
+      'label' => t('Find the existing organization or create it'),
+      'group' => t('Organic groups'),
+      'parameter' => array(
+        'curr_user_2' => array(
+          'type' => 'entity',
+          'label' => t('User'),
+          'description' => t('The user for which an organization is being sought.'),
+          'optional' => false,
+        ),
+        'org_name' => array(
+          'type' => 'text',
+          'label' => t('Organization Name'),
+          'description' => t('If an organization is not found one will be created. In that case, what should it be called.'),
+          'optional' => false,
+        ),
+      ),
+      'provides' => array(
+        'orgID' => array(
+          'type' => 'integer',
+          'label' => t('The Organization GID/NID'),
+        ),
+      ),
+    ),
+    'dl_billing_management_authenicate_user' => array(
+      'label' => t('Authenicate a user'),
+      'group' => t('User'),
+      'parameter' => array(
+        'user' => array(
+          'type' => 'entity',
+          'label' => t('User'),
+          'description' => t('The user to authenicate.'),
+          'optional' => false,
+        ),
+      ),
+      'provides' => array(
+        'auth_user' => array(
+          'type' => 'entity',
+          'label' => t('Authenicated User'),
+        ),
+      ),
+    ),
+    'dl_billing_management_make_org_admin' => array(
+      'label' => t('Make a user an admin of a Organization'),
+      'group' => t('Organic groups'),
+      'parameter' => array(
+        'user' => array(
+          'type' => 'text',
+          'label' => t('User'),
+          'description' => t('The UID to become an admin.'),
+          'optional' => false,
+        ),
+        'group' => array(
+          'type' => 'text',
+          'label' => t('Group'),
+          'description' => t('The GID the user should become an admin of.'),
+          'optional' => false,
+        ),
+      ),
+    ),
+    'dl_billing_management_advance_free_trial' => array(
+      'label' => t('Moves a free trial order through the checkout process.'),
+      'group' => t('Commerce Order'),
+      'parameter' => array(
+        'order' => array(
+          'type' => 'entity',
+          'label' => t('Order'),
+          'description' => t('The order to advance.'),
+          'optional' => false,
+        ),
+      ),
+    ),
+    'dl_billing_management_set_free_trial_duration' => array(
+      'label' => t('Changes any purchased license to 7 days for a free trial.'),
+      'group' => t('Commerce License'),
+      'parameter' => array(
+        'order' => array(
+          'type' => 'entity',
+          'label' => t('Order'),
+          'description' => t('The free trial order.'),
+          'optional' => false,
+        ),
+      ),
+    ),
+    'dl_billing_management_set_card_to_charge' => array(
+      'label' => t('Active card for future charges (not just authorization).'),
+      'group' => t('Commerce Card on File'),
+      'parameter' => array(
+        'user' => array(
+          'type' => 'text',
+          'label' => t('User'),
+          'description' => t('The UID of the card owner.'),
+          'optional' => false,
+        ),
+      ),
+    ),
+    'dl_billing_management_send_renewal_upcoming_emails' => array(
+      'label' => t('Send Renewal Upcoming Emails.'),
+      'group' => t('System'),
+      'parameter' => array(
+        'days' => array(
+          'type' => 'integer',
+          'label' => t('Day(s)'),
+          'description' => t('How Manys Days Before Expirations Should Renwel Notices Start Going Out'),
+          'optional' => false,
+        ),
+        'subject' => array(
+          'type' => 'text',
+          'label' => t('Subject'),
+          'description' => t("The mail's subject."),
+          'translatable' => TRUE,
+        ),
+        'message' => array(
+          'type' => 'text',
+          'label' => t('Message'),
+          'description' => t("The mail's message body."),
+          'translatable' => TRUE,
+        ),
+      ),
+    ),
+    'dl_billing_management_get_discount_from_free_trial' => array(
+      'label' => t('Get Discount Ammount From Free Trial.'),
+      'group' => t('Commerce Discount'),
+      'parameter' => array(
+        'order' => array(
+          'type' => 'entity',
+          'label' => t('Order'),
+          'wrapped' => FALSE,
+        ),
+        'lineItem' => array(
+          'type' => 'entity',
+          'label' => t('Product (Line Item)'),
+          'wrapped' => FALSE,
+        ),
+      ),
+      'provides' => array(
+        'discount_amount' => array(
+          'type' => 'integer',
+          'label' => t('Discount Amount'),
+        ),
+      ),
+    ),
+  );
+}
+
+/**
+ * Allows a user with the right permissions to become the selected user.
+ *
+ * @param $uid
+ *   The user ID to switch to.
+ *
+ * @return
+ *   TRUE if the user was sucessfully switched, or FALSE if there was an error.
+ */
+function impersonate_switch_user($uid) {
+  global $user;
+  if (!is_numeric($uid)) {
+    drupal_set_message(t('A user id was not correctly passed to the switching function.'));
+
+    watchdog('impersonate', 'The user id provided to switch users was not numeric.', NULL, WATCHDOG_ERROR);
+    return drupal_goto($_SERVER['HTTP_REFERER']);
+  }
+
+  $new_user = user_load($uid);
+
+  if ($user->uid == $uid || isset($user->impersonating)) {
+    watchdog('impersonate', 'This user is already impersonating.');
+    return FALSE;
+  }
+
+  if (variable_get('maintenance_mode', 0) && !user_access('access site in maintenance mode', $new_user)) {
+    drupal_set_message(t('It is not possible to impersonate in off-line mode.'));
+    return FALSE;
+  }
+
+  // Call logout hooks when switching from original user.
+  module_invoke_all('user_logout', $user);
+  drupal_session_regenerate();
+
+  //clear pass sessions first.
+  $query = db_delete('dl_impersonate');
+  $query->condition('uid_from',$user->uid);
+  $query->condition('uid_as',$new_user->uid);
+  $query->execute();
+
+  $query = db_insert('dl_impersonate');
+  $query->fields(array(
+    'uid_from' => $user->uid,
+    'uid_as' => $new_user->uid,
+    'sid' => session_id(),
+  ));
+  $query->execute();
+  // switch user
+
+  watchdog('impersonate', 'User %user now impersonate as %masq_as.', array('%user' => $user->name, '%masq_as' => $new_user->name ? $new_user->name : variable_get('anonymous', t('Anonymous'))), WATCHDOG_INFO);
+
+  $user->impersonating = $new_user->uid;
+  $user = $new_user;
+
+  // Call all login hooks when switching to masquerading user.
+  $edit = array(); // Passed by reference.
+  user_module_invoke('login', $edit, $user);
+
+  return TRUE;
+}
+
+/**
+ * Function for a masquerading user to switch back to the previous user.
+ */
+function impersonate_switch_back() {
+  // switch user
+  global $user;
+  cache_clear_all($user->uid, 'cache_menu', TRUE);
+
+
+  $uid = db_query("SELECT m.uid_from FROM {dl_impersonate} m WHERE m.sid = :sid AND m.uid_as = :uid_as ", array(
+    ':sid' => session_id(),
+    ':uid_as' => $user->uid,
+  ))->fetchField();
+
+  // erase record
+  db_delete('dl_impersonate')
+    ->condition('sid', session_id())
+    ->condition('uid_as', $user->uid)
+    ->execute();
+
+  $oldname = ($user->uid == 0 ? variable_get('anonymous', t('Anonymous')) : $user->name);
+
+  // Call logout hooks when switching from masquerading user.
+  module_invoke_all('user_logout', $user);
+  drupal_session_regenerate();
+
+  $user = user_load($uid);
+
+  // Call all login hooks when switching back to original user.
+  $edit = array(); // Passed by reference.
+  user_module_invoke('login', $edit, $user);
+
+  watchdog('impersonate', 'User %user no longer masquerading as %masq_as.', array('%user' => $user->name, '%masq_as' => $oldname), WATCHDOG_INFO);
+}
+
+/**
+ * A function to log events around impersonating. We will store these in their own log.
+ *
+ * $uid = The real user's uid.
+ * $iid = The uid of the user they impersonated as, also called the billing user.
+ * $msg = The log message
+ */
+function impersonate_log($uid,$iid,$msg){
+   global $base_root;
+   db_insert('dl_impersonate_log')
+  ->fields(array(
+    'uid' => $uid,
+    'iid' => $iid,
+    'message' => "$msg",
+    'location' => $base_root . request_uri(),
+    'referer'     => isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '',
+    'hostname'          => substr(ip_address(), 0, 128),
+    'timestamp' =>  time(),
+  ))
+  ->execute();
+}
+
+/*
+* Get the billing user for a group
+*/
+function dl_billing_management_get_billing_user_by_gid($gid){
+  $buid = false;
+  $query = db_select('og_membership','m');
+  $query->fields("m", array("etid"));
+  $query->condition("m.gid", $gid, "=");
+  $query->condition("m.entity_type", 'user', "=");
+  $query->join('users_roles','r','r.uid=m.etid and r.rid=10');
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $buid = $r['etid'];
+  }
+  return $buid;
+}
+
+/*
+* Create a new user during the typical DL Org creation process
+* Used to create a user for an offline order.
+*/
+function dl_billing_management_create_general_user($mail,$username,$data = null){
+  $password = user_password(8);
+  $new_user = array(
+    'name' => $username,
+    'pass' => $password, // note: do not md5 the password
+    'mail' => $mail,
+    'status' => 1,
+    'roles' => array(
+      DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+      6 => 'Subscriber',
+    ),
+  );
+  // The first parameter is sent blank so a new user is created.
+  $new_user = user_save('', $new_user);
+  return $new_user;
+}
+
+
+/*
+* Create a new user for billing and org ownership
+*/
+function dl_billing_management_create_billing_user($orgID,$oldAcct = null,$checkExisting = true){
+  //see if this org already has a billing ID
+  if($checkExisting==true && !is_null($oldAcct)){
+    $existingBUid = organization_control_subscriber_uid($oldAcct);
+    if($existingBUid!=false){
+      $existingBU = user_load($existingBUid);
+      return $existingBU;
+    }
+  }
+  if(is_null($oldAcct)){
+    $oldBillingEmail = 'import@outlier.com';
+  }else{
+    $oldBillingEmail = $oldAcct->mail;
+  }
+  //get a billing ID
+  $ubid = dl_billing_management_get_ubid($oldBillingEmail);
+  //format the username
+  $name = "dlBillingUser+".$ubid;
+  //format the email address
+  $email = $name."@outlier.com";
+  $password = user_password(8);
+  $new_user = array(
+    'name' => $name,
+    'pass' => $password, // note: do not md5 the password
+    'mail' => $email,
+    'status' => 1,
+    'init' => 'import@outlier.com',
+    'roles' => array(
+      DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+      10 => 'billing_only',
+      6 => 'Subscriber',
+    ),
+  );
+  // The first parameter is sent blank so a new user is created.
+  $new_user = user_save('', $new_user);
+
+  return $new_user;
+
+}
+
+/*
+* Create a new user for billing and org ownership
+*/
+function dl_billing_management_create_org($title,$uid = null){
+  $node = new stdClass();
+  $node->title = $title;
+  $node->type = "organization";
+  node_object_prepare($node);
+  $node->language = LANGUAGE_NONE;
+  if($uid != null){
+    $node->uid = $uid;
+  }
+  $node->status = 1;
+  $node->promote = 0;
+  $node->comment = 0;
+  $node = node_submit($node); // Prepare node for saving
+  node_save($node);
+  return $node;
+}
+
+function dl_billing_management_create_billing_profile($b_profile = array()){
+  $type = 'billing';
+
+  $country = $b_profile['country'];
+  $name_line = $b_profile['full_name'];
+  $first_name = $b_profile['first_name'];
+  $last_name = $b_profile['last_name'];
+  $administrative_area = $b_profile['state'];
+  $locality = $b_profile['city'];
+  $postal_code = $b_profile['zip'];
+  $thoroughfare = $b_profile['address1'];
+  $phone = $b_profile['phone'];
+  $organisation = $b_profile['organisation'];
+
+  //fields not currently mapped.
+//  $premise = $b_profile['premise'];
+//  $dependent_locality = $b_profile['dependent_locality'];
+//  $sub_administrative_area = $b_profile['sub_administrative_area'];
+
+  $new_profile = commerce_customer_profile_new($type);
+
+  $wrapper = entity_metadata_wrapper('commerce_customer_profile', $new_profile);
+  $wrapper->uid = $b_profile['buid'];
+  $wrapper->commerce_customer_address->country = $country;
+  $wrapper->commerce_customer_address->name_line = $name_line;
+  $wrapper->commerce_customer_address->first_name = $first_name;
+  $wrapper->commerce_customer_address->last_name = $last_name;
+  $wrapper->commerce_customer_address->organisation_name = $organisation;
+  $wrapper->commerce_customer_address->administrative_area = $administrative_area;
+//  $wrapper->commerce_customer_address->sub_administrative_area = $sub_administrative_area;
+  $wrapper->commerce_customer_address->locality = $locality;
+//  $wrapper->commerce_customer_address->dependent_locality = $dependent_locality;
+  $wrapper->commerce_customer_address->postal_code = $postal_code;
+  $wrapper->commerce_customer_address->thoroughfare = $thoroughfare;
+//  $wrapper->commerce_customer_address->premise = $premise;
+//  $wrapper->field_phone = $phone;
+
+  commerce_customer_profile_save($new_profile);
+
+  return $new_profile;
+}
+
+function dl_billing_management_create_dl_order($sku,$acct,$data = null){
+  #TODO//Add their card on file information.
+
+  //start the license order
+  $order = commerce_order_new($acct->uid, 'pending');
+  commerce_order_save($order);
+
+  //Add the product
+  $product = commerce_product_load_by_sku($sku);
+  $line_item = commerce_product_line_item_new($product, 1, $order->order_id);
+  commerce_line_item_save($line_item);
+
+  //add the line items to the order
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $order_wrapper->commerce_line_items[] = $line_item;
+
+  //save the order
+  commerce_order_save($order);
+
+  return $order;
+}
+
+/*
+ * The page for administrators to create offline orders
+*/
+function dl_billing_management_orders_offline_page(){
+  //return the form
+  $output['dl_billing_management_orders_offline_form'] = drupal_get_form('dl_billing_management_orders_offline_form');
+  return $output;
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_offline_form($form,&$form_state){
+  //New Org
+  $form['org_state'] = array(
+    '#title' => t('Organization'),
+    '#type' => 'radios',
+    '#options' => array('existing'=> t('Find Existing Organization'),'new'=> t('Create New Organization')),
+    '#required' => true,
+  );
+  //Existing Org
+  $form['existing_org'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Find Organization'),
+    '#size' => 90,
+    '#autocomplete_path' => 'admin/orggroup/autocomplete',
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('value' => 'existing'),
+      ),
+    ),
+  );
+  //New Org
+  $form['new_org']['title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Organization Name'),
+    '#size' => 30,
+    '#maxlength' => 60,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('value' => 'new'),
+      ),
+    ),
+  );
+  $form['new_org']['email'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Email Address'),
+    '#size' => 30,
+    '#maxlength' => 60,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('value' => 'new'),
+      ),
+    ),
+  );
+  $form['new_org']['username'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Username'),
+    '#size' => 30,
+    '#maxlength' => 60,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="customusername"]' => array('filled' => TRUE),
+      ),
+    ),
+  );
+  $form['new_org']['customusername'] = array(
+    '#type' => 'hidden',
+  );
+  //Which product
+  $form['product_sku'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Product SKU'),
+    '#description' => t('Enter the SKU of the product to add to the order.'),
+    '#autocomplete_path' => 'commerce_product/autocomplete/commerce_product/line_item_product_selector/product',
+    '#size' => 60,
+    '#maxlength' => 255,
+    '#required' => true,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('checked' => TRUE),
+      ),
+    ),
+  );
+
+  //Order Info Fields
+  $form['first_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('First Name'),
+    '#required' => false,
+    '#size' => 60,
+    '#maxlength' => 255,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('checked' => TRUE),
+      ),
+    ),
+  );
+  $form['last_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Last Name'),
+    '#required' => false,
+    '#size' => 60,
+    '#maxlength' => 255,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('checked' => TRUE),
+      ),
+    ),
+  );
+  $form['address'] = array(
+    '#type' => 'addressfield',
+    '#title' => t('Address'),
+    '#required' => false,
+    '#available_countries' => array('None', 'US', 'CA'),
+    '#default_value' => array('None' => 'None'),
+  );
+  $form['phone'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Phone'),
+    '#required' => false,
+    '#size' => 60,
+    '#maxlength' => 255,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('checked' => TRUE),
+      ),
+    ),
+  );
+  //submit
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Create Order'),
+    '#states' => array(
+      'visible' => array(
+        ':input[name="org_state"]' => array('checked' => TRUE),
+      ),
+    ),
+  );
+  return $form;
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_offline_form_validate(&$form,&$form_state){
+  //if existing,
+  if($form_state['values']['org_state']=='existing'){
+    //org is required
+    if(!isset($form_state['values']['existing_org']) || $form_state['values']['existing_org']==""){
+      form_set_error('existing_org',t("You must pick the existing organization."));
+    }
+  }//end if existing
+  //if new,
+  if($form_state['values']['org_state']=='new'){
+    //org title is required
+    if(!isset($form_state['values']['title']) || $form_state['values']['title']==""){
+      form_set_error('title', t('The organization name is required for new organizations.'));
+    }
+    //validate email
+    if(!valid_email_address($form_state['values']['email'])) {
+      form_set_error('email', t('The email address appears to be invalid.'));
+    }
+    //unique email
+    if(organization_control_mail_check_exists($form_state['values']['email'])){
+      form_set_error('email', t('That email already exists in the system. It must be unique.'));
+    }
+    //if the username was not set, get it from the email.
+    if(isset($form_state['values']['username']) && $form_state['values']['username']!="") {
+      $username = $form_state['values']['username'];
+    }
+    else{
+      $emailParts = explode('@',$form_state['values']['email']);
+      $username = $emailParts[0];
+      form_set_value($form['new_org']['username'], $username, $form_state);
+      $form_state['input']['username'] = $username;
+      $form_state['input']['customusername'] = $username;
+    }
+    //see if a username was unique.
+    if(organization_control_username_check_exists($username)){
+      drupal_set_message(t('The username was not unique. You can specific a username below.'),'error');
+      $form_state['rebuild'] = TRUE;
+    }
+    //see if a username was specificied.
+    if($error = user_validate_name($username)){
+      drupal_set_message( t($error),'error');
+      $form_state['rebuild'] = TRUE;
+    }
+  }//end if new
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_offline_form_submit(&$form,&$form_state){
+  //put the data in a formatted array
+  //come up with the org title
+  $submitted_orgParts = explode('[gid:',$form_state['values']['existing_org']);
+  $submitted_org = substr(end($submitted_orgParts),0,-1);
+  if($form_state['values']['org_state']=='existing'){
+    $data['orgTitle'] = organization_control_orgName($submitted_org);
+  }
+  //if new,
+  if($form_state['values']['org_state']=='new'){
+    $data['orgTitle'] = $form_state['values']['title'];
+  }
+  $data['submitted_org'] = $submitted_org;
+  //name
+  $data['full_name'] = $form_state['values']['first_name']." ".$form_state['values']['last_name'];
+  $data['first_name'] = $form_state['values']['first_name'];
+  $data['last_name'] = $form_state['values']['last_name'];
+  //address stuff
+  $data['state'] = isset($form_state['values']['address']['administrative_area']) ? $form_state['values']['address']['administrative_area'] : "" ;
+  $data['city'] =  isset($form_state['values']['address']['locality']) ? $form_state['values']['address']['locality'] : "" ;
+  $data['address1'] =  isset($form_state['values']['address']['thoroughfare']) ? $form_state['values']['address']['thoroughfare'] : "" ;
+  $data['address2'] =  isset($form_state['values']['address']['premise']) ? $form_state['values']['address']['premise'] : "" ;
+
+  $data['zip'] =  isset($form_state['values']['address']['postal_code']) ? $form_state['values']['address']['postal_code'] : "" ;
+  $data['country'] =  isset($form_state['values']['address']['country']) ? $form_state['values']['address']['country'] : "" ;
+  $data['organisation'] = $form_state['values']['title'];
+  $data['company'] = $form_state['values']['title'];
+  //phone
+  $data['phone'] = $form_state['values']['phone'];
+  //SKU
+  $data['sku'] = $form_state['values']['product_sku'];
+  //User Info
+  $data['email'] = $form_state['values']['email'];
+  $data['username'] = $form_state['values']['username'];
+  if($form_state['values']['org_state']=='existing'){
+    dl_billing_managment_offline_new_order($data);
+    drupal_set_message('Order and License activated for "'.$data['orgTitle'].'".');
+  }
+  elseif($form_state['values']['org_state']=='new'){
+    dl_billing_managment_offline_new_organization_and_order($data);
+    drupal_set_message('Organization "'.$data['orgTitle'].'" and User "'.$data['username'].'" Created. Order and License activated.');
+  }
+}
+
+function dl_billing_management_complete_open_orders_by_uid($uid){
+  //complete the order(s)
+  //find any orders that are pending or recurring_open.
+  $query = db_select('commerce_order', 'o');
+  $query->condition('o.uid',$uid);
+  $query->condition('status',array('pending','recurring_open','completed'),'IN');
+  $query->fields('o',array('order_id','status'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $order = commerce_order_load($r['order_id']);
+    //we are only evaluating orders that already had the status completed to close out any licesnse and billing cycles.
+    //Offline orders have a completed order and an active license.
+    if($r['status']!='completed'){
+      commerce_order_status_update($order, 'completed');
+    }
+
+    //licenses can be retrieved in different ways depending on the type of license.
+    $order_type = $order->type;
+    //for commerece orders
+    if($order_type == "commerce_order"){
+      //complete the licenses
+      $licenses = commerce_license_get_order_licenses($order);
+      foreach($licenses as $l){
+        if($l->status == 2){
+          commerce_license_suspend_action($l);
+        }
+        //confirm any billing cycles are closed
+        $bc = commerce_license_billing_get_license_billing_cycle($l);
+        if($bc){
+          $bc->status=0;
+          $bc->save();
+        }
+      }//end for each license
+    }
+
+    //for recurring orders
+    if($order_type == "recurring"){
+      //get the licenses associated with this order and suspend
+      dl_billing_management_recurring_order_suspend_licenses($order->order_id);
+      //get the billing cycles for this order and suspend,
+      dl_billing_management_get_recurring_cancel_billing_cycles($order->order_id);
+    }
+
+
+  }//end while orders
+
+}
+
+
+function dl_billing_managment_offline_new_order($data){
+
+
+  $orgID = $data['submitted_org'];
+  //try to get billing user
+  $buid = dl_billing_management_get_billing_user_by_gid($orgID);
+  if($buid==false){
+    //create the billing user
+    $user_billing = dl_billing_management_create_billing_user($orgID);
+    $buid = $user_billing->uid;
+  }else{
+    $user_billing = user_load($buid);
+  }
+  //add this to the data array
+  $data['buid'] = $user_billing->uid;
+
+  //Assign billing user to this org
+  if(!isset($user_billing->og_user_node['und'][0]['target_id']) || $user_billing->og_user_node['und'][0]['target_id'] != $orgID){
+    $user_billing->og_user_node['und'][0]['target_id'] = $orgID;
+    user_save($user_billing);
+  }
+
+  //Make billing user have the proper OG role
+  dl_billing_management_make_org_admin($user_billing->uid, $orgID);
+
+  //complete any open orders
+  dl_billing_management_complete_open_orders_by_uid($user_billing->uid);
+
+  //create the order
+  $order = dl_billing_management_create_dl_order($data['sku'],$user_billing,$data);
+
+  //add the customer profile
+  $profile = dl_billing_management_create_billing_profile($data);
+
+  //add the customer profile to the order
+  $order->commerce_customer_billing[LANGUAGE_NONE][0]['profile_id'] = $profile->profile_id;
+
+  //activate the license
+  $licenses = commerce_license_get_order_licenses($order);
+  foreach ($licenses as $license) {
+    $license->activate();
+    $license->expires_automatically = FALSE;
+    $license->save();
+  }
+
+  //cancel the main order
+  commerce_order_status_update($order, 'completed');
+
+  //active all users for this org
+  dl_billing_management_activate_group_users($orgID);
+
+  //send existing admins email
+  //get admins
+  $emails = organization_control_list_group_admin_emails($orgID);
+  $price = $order->commerce_order_total['und'][0]['amount'] / 100;
+  $price = money_format('$%.2n', $price);
+  $product = commerce_product_load($license->product_id);
+  $seats_tax = taxonomy_term_load($product->field_additional_seats['und'][0]['tid']);
+  $seats = $seats_tax->name;
+  //dl_billing_management_send_existing_email($emails, $orgID, $seats, $price);
+
+}
+
+function dl_billing_managment_offline_new_organization_and_order($data){
+  //create the general user
+  $new_user_general = dl_billing_management_create_general_user($data['email'],$data['username']);
+  //update some user profile fields.
+  $new_user_general = user_load($new_user_general->uid);
+  //first name
+  $new_user_general->field_first_name['und'][0]['values'] = $data['first_name'];
+   //last name
+  $new_user_general->field_last_name['und'][0]['values'] = $data['last_name'];
+  user_save($new_user_general);
+
+  //create the organization
+  $org = dl_billing_management_create_org($data['orgTitle'],$new_user_general->uid);
+  $orgID = $org->nid;
+
+  //create billing user
+  $new_user_billing = dl_billing_management_create_billing_user($orgID,$new_user_general);
+
+  //add this to the data array
+  $data['buid'] = $new_user_billing->uid;
+
+  //Assign billing user to this org
+  $new_user_billing->og_user_node['und'][0]['target_id'] = $orgID;
+  user_save($new_user_billing);
+  $new_user_billing = user_load($new_user_billing->uid);
+
+  //Make billing user have the proper OG role
+  dl_billing_management_make_org_admin($new_user_billing->uid, $orgID);
+
+  //create the order
+  $order = dl_billing_management_create_dl_order($data['sku'],$new_user_billing,$data);
+
+  //add the customer profile
+  $profile = dl_billing_management_create_billing_profile($data);
+
+  //add the customer profile to the order
+  $order->commerce_customer_billing[LANGUAGE_NONE][0]['profile_id'] = $profile->profile_id;
+
+  //activate the license
+  $licenses = commerce_license_get_order_licenses($order);
+  foreach ($licenses as $license) {
+    $license->activate();
+    $license->expires_automatically = FALSE;
+    $license->save();
+  }
+
+  //cancel the main order
+  commerce_order_status_update($order, 'completed');
+
+  //confirm the general user has the proper drupal roles
+  if(!is_null($new_user_general) && !organization_control_user_has_role('Subscriber', $new_user_general)){
+    $acctroles = $new_user_general->roles;
+    $acctroles[] = 'Subscriber';
+    user_save($new_user_general, array('roles' => $acctroles));
+  }
+  //confirm the general user has the proper group membership
+  if(!isset($new_user_general->og_user_node['und'][0]['target_id']) || $new_user_general->og_user_node['und'][0]['target_id']!=$orgID){
+       $new_user_general->og_user_node['und'][0]['target_id'] = $orgID;
+       user_save($new_user_general);
+  }
+  //confirm the general user has the proper group roles
+  if(!is_null($new_user_general) && !organization_control_is_group_admin($orgID,$new_user_general->uid)){
+    dl_billing_management_make_org_admin($new_user_general->uid, $orgID);
+  }
+
+  //active all users for this org
+  dl_billing_management_activate_group_users($orgID);
+
+  //send new user email
+  $price = $order->commerce_order_total['und'][0]['amount'] / 100;
+  if(function_exists('money_format')) {                 // workaround for testing in Windows dev env since Win php
+    $price = money_format('$%.2n', $price);             // does not have the money_format function
+  }
+  else {                                                // this should be executed when debugging in a Win env
+    $price = sprintf('%01.2f', $price);                 // god help us if the site gets hosted on Windows server
+  }
+  $product = commerce_product_load($license->product_id);
+  $seats_tax = taxonomy_term_load($product->field_additional_seats['und'][0]['tid']);
+  $seats = $seats_tax->name;
+  dl_billing_management_send_new_email($new_user_general, $orgID, $seats, $price);
+}
+
+function dl_billing_management_send_new_email($new_user_general, $orgID, $seats, $price) {
+  global $base_url;
+  $site_name = variable_get('site_name', 'Default');
+  $group = node_load($orgID);
+  $group_name = $group->title;
+  $from = 'messages@atdove.org'; // from e-mail address
+  $subject = "Order for $group_name placed on atdove.org";
+
+  $body = "<p>A subscription has been created for $group_name on atdove.org.</p><p>The subscription was for $seats at $price. </p><p>atdove.org is a digital training platform for veterinary professionals like you. See procedural shorts of real patients as they are treated at Portland’s award winning DoveLewis. Follow discussions about customer service, reception, client communication and management topics too.</p>";
+
+  $login_link = "https://www.atdove.org/user/login";
+  $password_reset = user_pass_reset_url($new_user_general);
+  $currentGroup = organization_control_orgID($new_user_general,true);
+  $body .= "<p>Use this link to scrub in and set up your profile.<br>$password_reset </p>";
+
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  drupal_mail('dl_billing_management', 'new', $new_user_general->mail, language_default(), $params, $from);
+}
+
+function dl_billing_management_send_existing_email($emails, $orgID, $seats, $price) {
+  global $base_url;
+  $site_name = variable_get('site_name', 'Default');
+  $group = node_load($orgID);
+  $group_name = $group->title;
+  $from = 'messages@atdove.org'; // from e-mail address
+  $subject = "Order for $group_name placed on atdove.org";
+
+  foreach ($emails as $email) {
+    $body = "<p>A subscription has been created for $group_name on atdove.org.</p><p>The subscription was for $seats at $price. Scrub in at $base_url.</p>";
+    $params = array(
+      'subject' => $subject,
+      'body' => $body,
+    );
+    drupal_mail('dl_billing_management', 'existing', $email, language_default(), $params, $from);
+  }
+}
+
+function dl_billing_management_send_renewal_fail($order) {
+  global $base_url;
+  $site_name = variable_get('site_name', 'Default');
+  $user = user_load($order->uid);
+  $orgID = organization_control_orgID($user);
+  $group = node_load($orgID);
+  $group_name = $group->title;
+  $emails = organization_control_list_group_admin_emails($orgID);
+  $price = $order->commerce_order_total['und'][0]['amount'] / 100;
+  $price = money_format('$%.2n', $price);
+  $product = commerce_product_load($license->product_id);
+  $seats_tax = taxonomy_term_load($product->field_additional_seats['und'][0]['tid']);
+  $seats = $seats_tax->name;
+
+  $from = 'messages@atdove.org'; // from e-mail address
+  $subject = "Renewal for $group_name failed on atdove.org";
+
+  foreach ($emails as $email) {
+    $body = "
+      <p>".$group_name."'s <a href='https://atdove.org'>atdove.org</a> premium account renewal failed because the credit card on file was declined. You will need to update your billing information so you and everyone in your organization can retain access to their premium account.</p>
+      <p>Updating your billing information is easy! All you need to do is select “My Subscription” from the drop-down menu after scrubbing in. From here, you will see the prompts to enter a new credit card and get your account updated.</p>
+      <p>New videos and articles are added weekly with topics suggested by our users, and our recent redesign makes the site faster and easier for you to use. As long as your billing information stays updated, no one on the account will ever lose access. </p>
+    ";
+    $params = array(
+      'subject' => $subject,
+      'body' => $body,
+    );
+    drupal_mail('dl_billing_management', 'fail', $email, language_default(), $params, $from);
+  }
+  // also send email to atdove admin
+  $body = "<p>Subscription renewal for $group_name on atdove.org has failed.</p><p>The subscription was for $seats at $price.</p>";
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  drupal_mail('dl_billing_management', 'fail', 'info@atdove.org', language_default(), $params, "no-reply@atdove.org");
+
+}
+
+function dl_billing_management_mail($key, &$message, $params) {
+  switch ($key) {
+    case 'new':
+      $message['subject'] = $params['subject'];
+      $message['body'] = $params['body'];
+    break;
+    case 'existing':
+      $message['subject'] = $params['subject'];
+      $message['body'] = $params['body'];
+    break;
+    case 'dont_renew':
+      $message['subject'] = $params['subject'];
+      $message['body'] = $params['body'];
+    break;
+    case 'fail':
+      $message['subject'] = $params['subject'];
+      $message['body'] = $params['body'];
+    break;
+    case 'org_reactivation':
+    case 'org_reactivation_admin':
+      $message['subject'] = $params['subject'];
+      $message['body'] = $params['body'];
+    break;
+  }
+
+}
+
+/*
+ * The page for administrators to adjust organization's online orders
+*/
+function dl_billing_management_orders_adjust_online_find_org_page(){
+  //return the form
+  $output['dl_billing_management_orders_adjust_online_find_org_form'] = drupal_get_form('dl_billing_management_orders_adjust_online_find_org_form');
+  return $output;
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_adjust_online_find_org_form($form,&$form_state){
+  //Existing Org
+  $form['existing_org'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Find Organization'),
+    '#size' => 90,
+    '#autocomplete_path' => 'admin/orggroup/autocomplete',
+  );
+  //submit
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Continue'),
+  );
+  return $form;
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_adjust_online_find_org_form_validate(&$form,&$form_state){
+  //org is required
+  if(!isset($form_state['values']['existing_org']) || $form_state['values']['existing_org']==""){
+    form_set_error('existing_org',t("You must pick the existing organization."));
+  }
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_adjust_online_find_org_form_submit(&$form,&$form_state){
+  $submitted_orgParts = explode('[gid:',$form_state['values']['existing_org']);
+  $submitted_org = substr(end($submitted_orgParts),0,-1);
+  drupal_goto('admin/commerce/orders/adjust-online-orders/'.$submitted_org);
+}
+
+/*
+ * The page for administrators to adjust organization's online orders
+*/
+function dl_billing_management_orders_adjust_online_page($orgID,$findPastRecurring = false){
+  $error = false;
+  $r_order ='';
+  $p_order ='';
+  $billing_profile_id_current = '';
+  $billing_profile_current = '';
+  $failedRenewal = false;
+  $pastRecurringFound = false;
+
+  //give basic current order info.
+  $output = array();
+  $subscriptionOutput = "";
+  $output['header'] = array(
+    '#type' => 'markup',
+    '#markup' => "<h1>Adjust a Current Order</h1><p><a href=/admin/commerce/orders/adjust-online-orders>Find a Different Organization</a><br /></p><h3>Adjusting Order/Product for ".organization_control_orgName($orgID)." (".$orgID.")</h3>",
+  );
+
+  //Subscription Info
+  $buid = dl_billing_management_get_billing_user_by_gid($orgID);
+
+  //if there was no billing user that is a problem.
+  if($buid == 0){
+    $subscriptionOutput .= "<div class='error'>This organization does not have a billing user. This should be corrected.</div>";
+    $output['subscription'] = array(
+      '#type' => 'markup',
+      '#markup' => $subscriptionOutput,
+    );
+    $output['dl_billing_management_fix_bu_form'] = drupal_get_form('dl_billing_management_fix_bu_form',$orgID);
+    return $output;
+  }
+
+  $bu = user_load($buid);
+  $subscription_info = organization_control_subscription_info($bu);
+  //if this function above organization_control_subscription_info() returns false, it may be that the order failed to renew.
+  //look up if a license. We can assume none are active or this conditional would not have been meet.
+  // If there are multiple we will grab the most recently created.
+  if($subscription_info==false){
+    $query = db_select('commerce_license','l');
+    $query->condition('l.uid',$buid);
+    $query->join('field_data_commerce_license','fcl',"fcl.commerce_license_target_id = l.license_id");
+    $query->join('commerce_line_item','li',"li.line_item_id = fcl.entity_id");
+    $query->join('field_data_field_additional_seats','s',"s.entity_id = l.product_id");
+    $query->join('field_data_field_total_seats','ts',"ts.entity_id = s.field_additional_seats_tid");
+    $query->join('field_data_commerce_license_duration', 'd','d.entity_id=l.product_id');
+    $query->fields('d',array('commerce_license_duration_value'));
+    $query->fields('l',array('license_id','expires'));
+    $query->fields('ts',array('field_total_seats_value'));
+    $query->range(0,1);
+    $query->orderby('l.license_id','DESC');
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      //see if you can find a recurring order.
+      $queryR = db_select('field_data_cl_billing_license','fbl');
+      $queryR->condition('fbl.cl_billing_license_target_id',$r['license_id']);
+      $queryR->join('commerce_line_item','li',"li.line_item_id = fbl.entity_id");
+      $queryR->join('field_data_cl_billing_cycle','fbc',"fbc.entity_id = li.order_id");
+      $queryR->join('cl_billing_cycle','bc',"bc.billing_cycle_id = fbc.cl_billing_cycle_target_id");
+      $queryR->fields('bc',array('status'));
+      $queryR->range(0,1);
+      $queryR->orderby('fbl.entity_id','DESC');
+      $resultsR = $queryR->execute();
+      //build the subscription array with all that is needed.
+      if(!isset($r['field_total_seats_value']) || $r['field_total_seats_value']==""){
+        $r['field_total_seats_value'] = 0;
+      }
+      // change unix epoch value to user friendly label
+      if (isset($r['commerce_license_duration_value'])) {
+        $r['commerce_license_duration_value'] = $r['commerce_license_duration_value'] == 31536000 ? 'annual' : 'monthly';
+      }
+      $subscription_info['field_total_seats_value'] = $r['field_total_seats_value'];
+      $subscription_info['commerce_license_duration_value'] = $r['commerce_license_duration_value'];
+      $subscription_info['online'] = false;
+      $subscription_info['license_id'] = $r['license_id'];
+      $subscription_info['expires'] = $r['expires'];
+      $subscription_info['autorenew'] = false;
+      while($rR = $resultsR->fetchAssoc()){
+        $subscription_info['online'] = true;
+        $subscription_info['autorenew'] = $rR['status'];
+      }
+    }
+  }
+  //Show a message if there is not an active order.
+  if($subscription_info == false){
+    $subscriptionOutput .= "<div class='error'>This organization does not have an active order that can be adjusted. Consider <a href='/admin/commerce/orders/offline'>creating an offline order</a> and then adjusting it. </div>";
+    $error = true;
+  }
+
+  //if there is an active offline order there may be previous online orders that we desire to load. (Sometimes offline orders are issued as a stopgap but the online order is the real/desired order).
+  if(isset($subscription_info['online']) && $subscription_info['online']==false){
+    $query = db_select('commerce_order','o');
+    $query->condition('o.uid',$buid);
+    $query->condition('o.type','recurring');
+    $query->join('commerce_line_item','li',"li.order_id = o.order_id AND li.type!='commerce_discount'");
+    $query->join('field_data_cl_billing_license','bl','bl.entity_id = li.line_item_id');
+    $query->join('commerce_license','l','l.license_id = bl.cl_billing_license_target_id');
+    $query->join('commerce_product','p','p.product_id = l.product_id');
+    $query->fields('o',array('order_id','status'));
+    $query->fields('p',array('title'));
+    $query->orderBy('o.order_id','DESC');
+    $query->range(0,1);
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      if($r['status']!='recurring_open'){
+        $pastRecurringFound = true;
+        $pastRecurringProduct = $r['title'];
+        $past_order_id_r = $r['order_id'];
+      }
+    }
+  }
+
+
+
+  //confirm there is a card on file.
+  if(count(commerce_cardonfile_load_multiple_by_uid($buid))==0){
+    $subscriptionOutput .= "<div class='error'>This organization does not have a card on file. You may still modify this order but a card on file must be added before the next renewal.</div>";
+    //Not so sure they want to add CCs on behalf of customers. But if this becomes desired, here is how it would be done.
+//     Card on File stuff
+//     $cofOutput = "<h3>Card On File Information</h3><p><strong>Warning:</strong> Currently if you modify a Card on File it redirects you away from here and to an inproper page. The redirection is because it assumes the Team Admin is modifying the card on file and not a Dove Lewis admin. This is known and will be addressed.</p>";
+//     $cofOutput .= views_embed_view('commerce_card_on_file_user_cards', 'block_2');
+//     $output['cof'] = array(
+//       '#type' => 'markup',
+//       '#markup' => $cofOutput,
+//     );
+//
+//     $output['cofAdd'] = array(
+//       '#type' => 'markup',
+//       '#markup' => l(t('Add a New Credit Card'),'user/'.$buid.'/cards/add/Zv86GX2I2DTeXevedUYrgtg4gSjSQkQQ3m-N9VUGfd4'),
+//       '#prefix' => '<p>',
+//       '#suffix' => '</p>',
+//     );
+  }
+  //if its online, confirm the current license is tied to a current recurring order.
+  if($subscription_info['online']==true){
+    //I am just going to query for what I want. The API is not effecient or clear enough
+    //get the product order tied to this license.
+    $query = db_select('commerce_order','o');
+    $query->condition('o.uid',$buid);
+    $query->condition('o.status',array('completed','pending'),'IN');
+    $query->join('commerce_line_item','li',"li.order_id = o.order_id AND li.type!='commerce_discount'");
+    $query->join('field_data_commerce_license','fcl','fcl.entity_id = li.line_item_id AND fcl.commerce_license_target_id = '.$subscription_info['license_id']);
+    $query->fields('o',array('order_id','status'));
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      $p_order = $r['order_id'];
+    }
+    if($p_order==''){
+      $subscriptionOutput .= "<div class='error'>A proper product order was not found.</div>";
+      $error = true;
+    }
+//why does this need an open status vs completed
+    //attempt to get the recurring order tied to this that has an open status
+    $query = db_select('commerce_order','o');
+    $query->condition('o.uid',$buid);
+    $query->condition('o.status',array('recurring_open','completed','cardonfile_payment_failed_soft_decline','cardonfile_payment_error_hard_decline'));
+    $query->join('commerce_line_item','li',"li.order_id = o.order_id AND li.type!='commerce_discount'");
+    $query->join('field_data_cl_billing_license','fbl','fbl.entity_id = li.line_item_id AND fbl.cl_billing_license_target_id = '.$subscription_info['license_id']);
+    $query->fields('o',array('order_id','status'));
+    $query->orderBY('li.order_id','DESC');
+    $query->range(0,1);
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      //The next conditional is a special step for failed orders. If they were not included in this query conditional then the query could find a order older than the failed one.
+      if($r['status'] != ('cardonfile_payment_failed_soft_decline') && $r['order_status'] != ('cardonfile_payment_error_hard_decline')){
+        $r_order = $r['order_id'];
+      }
+    }
+
+
+    //there is an edge case where the subscription info is still passed as true cause the license has been set to active yet the current recurring order doesn't exist or has a failed status
+    if(!isset($r_order) || $r_order=="" || $r_order==0){
+      //there was a problem. If the problem is the past order failed we can prompt the admin to set it to renew
+      $query = db_select('commerce_order','o');
+      $query->condition('o.uid',$buid);
+      $query->condition('o.type','recurring');
+      $query->fields('o',array('order_id','status'));
+      $query->orderBy('o.order_id','DESC');
+      $query->range(0,1);
+      $results = $query->execute();
+      while($r = $results->fetchAssoc()){
+        if($r['status']=='cardonfile_payment_failed_soft_decline' || $r['status']=='cardonfile_payment_error_hard_decline'){
+          $failedRenewal = true;
+          $subscriptionOutput .= "<div class='error'>This organization's last renewal failed. Therefore no renewals will be attempted and a change won't take place. You may <a href='/my-organization/reactivate-license/".$orgID."'>reactivate this order</a> and then make your change.</div>";
+        }
+      }
+      if($failedRenewal==false){
+         $subscriptionOutput .= "<div class='error'>There was an unknown error in locating this organization's recurring order.</div>";
+      }
+      $error = true;
+    }else{
+      //if the billing cycle is not set to renew, prompt that it will be
+      $r_order_loaded = commerce_order_load($r_order);
+      $billing_cycle_id = $r_order_loaded->cl_billing_cycle['und'][0]['target_id'];
+      $billing_cycle = entity_load_single('cl_billing_cycle', $billing_cycle_id);
+      if($billing_cycle->status!=1){
+        $subscriptionOutput .= "<div class='error'>This organization's current order is set to not renew. If you change the product, it will reactivate the renewal.</div>";
+      }
+    }
+  }
+  //active offline orders
+  elseif(isset($subscription_info['online'])){
+    //I am just going to query for what I want. The API is not effecient or clear enough
+    //we could find the orders by status or license. Since multiple orders could have this offline status, find the one tied to the license.
+    $query = db_select('field_data_commerce_license','fl');
+    $query->condition('fl.commerce_license_target_id',$subscription_info['license_id']);
+    $query->join('commerce_line_item','cl','fl.entity_id = cl.line_item_id');
+    $query->fields('cl',array('order_id'));
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      $p_order = $r['order_id'];
+    }
+    $p_order_loaded = commerce_order_load($p_order);
+    //offline orders do have a billing profile but none of the fields were required.
+    $subscriptionOutput .= "<div class='warning'><p>This offline order will become a recurring online order and needs a more complete Billing Profile. That form has been included below.</p></div>";
+
+    if($pastRecurringFound){
+      $subscriptionOutput .= "<div class='warning'><p>There is a previous online order for <em>$pastRecurringProduct</em>. You may reactivate that previous online order. It will attempt to renew so you may wish to confirm the card on file first. This action will disable the current offline order.</p>";
+      $subscriptionOutput .= drupal_render(drupal_get_form('dl_billing_management_admin_offline_to_reactivate_online_form',$past_order_id_r,$p_order,$orgID));
+      $subscriptionOutput .= "</div>";
+    }
+
+    //if one exists, set it.
+    if(isset($p_order_loaded->commerce_customer_billing['und'][0]['profile_id'])){
+      //it is possbile this organization used to have online recurring orders but was given an offline order temporarily (DL admins do this sometimes to pacify a troubled acct.).
+      //if so, that previous online order probably has a more complete billing profile. We will make that assumption and load it.
+      $query = db_select('commerce_order','o');
+      $query->condition('o.uid',$buid);
+      $query->condition('o.status',array('recurring_open'),'!=');
+      $query->condition('o.type',array('recurring'),'=');
+      $query->fields('o',array('order_id','status'));
+      $query->range(0,1);
+      $query->orderBy('o.order_id','DESC');
+      $results = $query->execute();
+      $b_order_id = 0;
+      while($r = $results->fetchAssoc()){
+        $b_order_id = $r['order_id'];
+      }
+      //if a old recurring order was found, use its profile
+      if($b_order_id>0 && isset($b_order->commerce_customer_billing['und'][0]['profile_id']) ){
+        $b_order = commerce_order_load($b_order_id);
+        $billing_profile_id_current = $b_order->commerce_customer_billing['und'][0]['profile_id'];
+      }
+      //Otherwise load the one created for the offline order (probably incomplete)
+      else{
+        $billing_profile_id_current = $p_order_loaded->commerce_customer_billing['und'][0]['profile_id'];
+      }
+      //load the full biling profile
+      $billing_profile_current = commerce_customer_profile_load($billing_profile_id_current);
+      //looks like some offline orders are not saving the country. This prevents existing data from loading. So fallback to the good ole USA
+      if($billing_profile_current->commerce_customer_address['und'][0]['country']==""){
+        $billing_profile_current->commerce_customer_address['und'][0]['country'] = "US";
+      }
+    }
+  }
+
+  if(!$error){
+    $subscriptionOutput .= "
+      <h4>Current License Details</h4>
+      <ul>
+    ";
+    $subscriptionOutput .= "
+        <li>Expires: ".date("M d Y",$subscription_info['expires'])."</li>
+        <li>Total Seats: ".$subscription_info['field_total_seats_value']."</li>
+        <li>Billing Cycle: ".$subscription_info['commerce_license_duration_value']."</li>
+        <li>Autorenew: ";  $subscriptionOutput .= $subscription_info['autorenew']==true ? "True" : "False"; $subscriptionOutput .= "</li>
+        <li>Online Order: ";  $subscriptionOutput .= $subscription_info['online']==true ? "True" : "False"; $subscriptionOutput .= "</li>
+      </ul>
+    ";
+  }
+  $output['subscription'] = array(
+    '#type' => 'markup',
+    '#markup' => $subscriptionOutput,
+  );
+
+
+  if(!$error){
+     //return the form
+  $output['disclaimer'] = array(
+    '#type' => 'markup',
+    '#markup' => "<h3>Adjust Order/Product</h3>**Changes in seat limit take effect immediately. The change in price and billing period will be realized at the next renewal on ".date("M d Y",$subscription_info['expires']),
+  );
+    //lets pass some args to this form.
+    $orgDetails = array();
+    $orgDetails['orgID'] = $orgID;
+    $orgDetails['online'] = $subscription_info['online'];
+    $orgDetails['p_order_id'] = $p_order;
+    $orgDetails['r_order_id'] = $r_order;
+    $orgDetails['license_id'] = $subscription_info['license_id'];
+    $orgDetails['billing_cycle'] = $subscription_info['commerce_license_duration_value'];
+    $output['dl_billing_management_orders_adjust_online_form'] = drupal_get_form('dl_billing_management_orders_adjust_online_form',$billing_profile_current,$orgDetails);
+  }
+  return $output;
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_adjust_online_form($form,&$form_state,$profile,$orgDetails){
+  //Which product
+  $form['product_sku'] = array(
+    '#type' => 'textfield',
+    '#title' => t('New Product SKU'),
+    '#description' => t('Enter the SKU of the new product this organization should be granted.'),
+    '#autocomplete_path' => 'commerce_product/autocomplete/commerce_product/line_item_product_selector/product',
+    '#size' => 60,
+    '#maxlength' => 255,
+    '#required' => true,
+  );
+  //if the existing order is not an online order, then we need a more complete billing profile.
+  if($orgDetails['online']==false ){
+  //load the customer billing profile form
+    // Ensure this include file is loaded when the form is rebuilt from the cache.
+    $form_state['build_info']['files']['form'] = drupal_get_path('module', 'commerce_customer') . '/includes/commerce_customer_profile.forms.inc';
+    // Ensure the owner name is accessible if the uid is set.
+    if (!empty($profile->uid) && $owner = user_load($profile->uid)) {
+      $profile->name = $owner->name;
+    }
+    if (empty($profile->created)) {
+      $profile->date = format_date(REQUEST_TIME, 'custom', 'Y-m-d H:i:s O');
+    }
+    // Add the field related form elements.
+    $form_state['customer_profile'] = $profile;
+    field_attach_form('commerce_customer_profile', $profile, $form, $form_state);
+  }
+  //pass on some already queried info
+  $form['orgDetails'] = array(
+    '#type' => 'hidden',
+    '#value' => $orgDetails,
+  );
+  //submit
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Create Order'),
+    '#weight' => '100',
+  );
+  return $form;
+}
+
+/*
+ * The form for administrators to create offline orders
+*/
+function dl_billing_management_orders_adjust_online_form_validate(&$form,&$form_state){
+  $orgDetails = $form_state['values']['orgDetails'];
+  //we passed the order and license information. But for true validation we should confirm this info one more time (the validation on the page is really for verbose feedback).
+  $buid = dl_billing_management_get_billing_user_by_gid($orgDetails['orgID']);
+  $bu = user_load($buid);
+  $subscription_info = organization_control_subscription_info($bu);
+  //org is required
+  if(!isset($orgDetails['orgID']) || $orgDetails['orgID']=="" || $orgDetails['orgID']==0){
+    form_set_error('org',t("There is an issue with the submitted organization."));
+  }
+  //do the have an active license
+  if($subscription_info == false){
+    form_set_error('org',t('This organization does not have an active order that can be adjusted.'));
+  }
+  //a sku is required
+  if(!isset($form_state['values']['product_sku']) || $form_state['values']['product_sku'] == ""){
+    form_set_error('product_sku',t('You must choose the new product.'));
+  }
+  //typical validation done on billing profiles
+  if($orgDetails['online']==false ){
+    $profile = $form_state['customer_profile'];
+    // Validate the "owned by" field.
+    if (!empty($form_state['values']['name']) && !($account = user_load_by_name($form_state['values']['name']))) {
+      // The use of empty() is mandatory in the context of usernames as the empty
+      // string denotes an anonymous user.
+      form_set_error('name', t('The username %name does not exist.', array('%name' => $form_state['values']['name'])));
+    }
+    // Notify field widgets to validate their data.
+    field_attach_form_validate('commerce_customer_profile', $profile, $form, $form_state);
+  }
+}
+
+/*
+ * The form submit for administrators to adjust orders
+*/
+function dl_billing_management_orders_adjust_online_form_submit(&$form,&$form_state){
+
+  $orgDetails = $form_state['values']['orgDetails'];
+  $buid = dl_billing_management_get_billing_user_by_gid($orgDetails['orgID']);
+  $bu = user_load($buid);
+  $subscription_info = organization_control_subscription_info($bu);
+  //SKU
+  $new_sku = $form_state['values']['product_sku'];
+
+  //find the order ids
+  $r_order_id = $orgDetails['r_order_id'];
+  $p_order_id = $orgDetails['p_order_id'];
+
+  //load the orders
+  $p_order = commerce_order_load($p_order_id);
+  if($orgDetails['online']){
+   $r_order = commerce_order_load($r_order_id);
+  }
+  //load the new product
+  $new_product_sku = $form_state['values']['product_sku'];
+  $new_product = commerce_product_load_by_sku($new_product_sku);
+  $new_product_id = $new_product->product_id;
+  //if the current order is an online order than we just need to update the product and billing cycle type.
+  //if the current order is an offline order thean we need to create a recurring order for the license
+  if($orgDetails['online']){
+    //if the period is different, update it.
+    //load the current billing cycle
+    $billing_cycle_id = $r_order->cl_billing_cycle['und'][0]['target_id'];
+    $billing_cycle = entity_load_single('cl_billing_cycle', $billing_cycle_id);
+    $billing_cycle_type_name = $billing_cycle->type;
+    //find the new billing cycle.
+    $new_billing_cycle_id = $new_product->cl_billing_cycle_type['und'][0]['target_id'];
+    //lookup the value of this id.
+    $query = db_select('cl_billing_cycle_type','bct');
+    $query->condition('bct.billing_cycle_type_id',$new_billing_cycle_id);
+    $query->fields('bct',array('name'));
+    $results = $query->execute();
+    $new_billing_cycle_type_name = $results->fetchField();
+    if($new_billing_cycle_type_name!=$billing_cycle_type_name){
+      $billing_cycle->type = $new_billing_cycle_type_name;
+      $billing_cycle->save();
+    }
+    //if the billing cycle was not set to renew, it makes no sense to go through this exercise.
+    if($billing_cycle->status!=1){
+      $billing_cycle->status = 1;
+      $billing_cycle->save();
+    }
+    if($billing_cycle->expires<time()){
+      $billing_cycle->expires = time();
+      $billing_cycle->save();
+    }
+    //change the licenses product.
+    $licenses = commerce_license_get_order_licenses($p_order);
+    foreach($licenses as $l){
+      $l->product_id = $new_product_id;
+      if($l->expires<time()){
+        $l->expires = time();
+      }
+      $l->save();
+    }
+    if($r_order->status != 'recurring_open'){
+      //reset the order status.
+      commerce_order_status_update($r_order, 'recurring_open');
+    }
+  }
+  //offline orders
+  else{
+    //process and save the billing profile
+    $profile = &$form_state['customer_profile'];
+    // Save default parameters back into the $profile object.
+    $profile->status = $form_state['values']['status'];
+    // Set the profile's owner uid based on the supplied name.
+    if (!empty($form_state['values']['name']) && $account = user_load_by_name($form_state['values']['name'])) {
+      $profile->uid = $account->uid;
+    }
+    // Notify field widgets.
+    field_attach_submit('commerce_customer_profile', $profile, $form, $form_state);
+    // Save the profile.
+    commerce_customer_profile_save($profile);
+    //can we just adjust the license, and tie it to a recurring?
+    //change the licenses product.
+    $licenses = commerce_license_get_order_licenses($p_order);
+    foreach($licenses as $l){
+       $l->product_id = $new_product_id;
+       $l->is_new_revision = true;
+       if($l->expires<time()){
+        $l->expires = time();
+       }
+       $l->save();
+    }
+    //change the product order status to pending to match commerce license billing's appraoch
+    $p_order->status = 'pending';
+    //add the customer profile to the order
+    $p_order->commerce_customer_billing[LANGUAGE_NONE][0]['profile_id'] = $profile->profile_id;
+    commerce_order_save($p_order);
+    $r_order = dl_billing_create_recurring_from_existing_product_order($p_order);
+  }
+  drupal_set_message("This organization's order/product was updated. Changes in seat limit take effect immediately. The change in price and billing period will be realized at the next renewal on ".date("M d Y",$subscription_info['expires']));
+
+}
+
+/**
+ *
+ * This creates a recurring order from a product order. This is useful when going from offline to online.
+ *
+ * Creates recurring orders for licenses in the provided order.
+ *
+ * This is based on the funciton commerce_license_billing_create_recurring_orders($order)
+ * That function creates a brand new billing cycle which means a new expriation date.
+ * We prefer that the billing cycle be created to match the existing license, order and expiration.
+ * That is the difference and reason for this function.
+ *
+ * @param $order
+ *   The order to use as a base of the new recurring orders.
+ */
+function dl_billing_create_recurring_from_existing_product_order($order,$product_id = null) {
+  if ($order->uid == 0) {
+    // This is an anonymous order.
+    $message = 'Could not open a recurring order for order #@order_id because its owner is not known.';
+    watchdog('commerce_license_billing', $message, array('@order_id' => $order->order_id), WATCHDOG_ERROR);
+    return;
+  }
+  // Group licenses by billing cycle type.
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $billing_cycle_type_ids = array();
+  $grouped_licenses = array();
+  foreach ($order_wrapper->commerce_line_items as $line_item_wrapper) {
+    if (!empty($line_item_wrapper->value()->commerce_license)) {
+      $license = $line_item_wrapper->commerce_license->value();
+    }
+  }
+  if(is_null($product_id)){
+     $product_id = $license->product_id;
+  }
+  elseif( $product_id != $license->product_id ){
+      $license->product_id = $product_id;
+      $license->save();
+  }
+  $product = commerce_product_load($product_id);
+  $billing_cycle_type_id = $product->cl_billing_cycle_type['und'][0]['target_id'];
+  // Load all found billing cycle types.
+  $billing_cycle_types  = entity_load('cl_billing_cycle_type', array($billing_cycle_type_id));
+  $billing_cycle_type = $billing_cycle_types[$billing_cycle_type_id];
+    //the billing cycle API allows you to set a start date but not an expiration date_create_immutable()
+    //we have two choices, calculate a start date based on the known end date and billing period
+    //or revise the billing cycle after its saved.
+    //I am choosing the 2nd because the data would make more sense
+    //we will do this in the loop that anaylizes licenses.
+    $billing_cycle = $billing_cycle_type->getBillingCycle($order->uid);
+
+    if($license->expires<time()){
+      $license->expires = time();
+      $license->save();
+    }
+    $billing_cycle->end = $license->expires;
+    $billing_cycle->save();
+
+    // Check if there's an existing order attached to that billing cycle.
+    $recurring_order = $billing_cycle->getOrder();
+    if ($recurring_order) {
+
+//should we set its status to recurring_open?
+      $recurring_order_wrapper = entity_metadata_wrapper('commerce_order', $recurring_order);
+      // Generate a base line item for each license.
+      $existing_line_items = $recurring_order_wrapper->commerce_line_items->value();
+      $line_items = array();
+      $line_items[] = commerce_license_billing_generate_base_line_item($license, $billing_cycle, $recurring_order->order_id);
+      $recurring_order_wrapper->commerce_line_items = array_merge($existing_line_items, $line_items);
+      $recurring_order_wrapper->save();
+      if($recurring_order_wrapper->status != 'recurring_open'){
+        //reset the order status.
+        commerce_order_status_update($r_order, 'recurring_open');
+      }
+    }
+    else {
+      commerce_license_billing_generate_recurring_order($order, $billing_cycle, array($license));
+    }
+}
+/*
+ * Access callback to confirm user has rights to reactivate the account
+*/
+function dl_billing_management_reactivate_page_access(){
+  $gid = organization_control_orgID();
+  if(organization_control_is_group_admin($gid)){
+    return true;
+  }
+  //fallback to false;
+  return false;
+}
+/*
+ * Page to confirm a failed order for an attempted renewal
+*/
+function dl_billing_management_reactivate_failed_renewal_page($gid = null){
+  $status = '';
+  $seats = '';
+  $expires = '';
+  $autorenew = '';
+  $onlineStatus = '';
+  $pageTitle = t("Reactivate Your License");
+  $headerMarkup = "<h1>$pageTitle</h1>
+    <p><a href='/my-organization/license'>Back to License Details</a></p>
+  ";
+  $output = array();
+
+
+  //if a gid I was passed. Assume its a DL admin, there is access control on the menu route, and load the org info.
+  if(!is_null($gid)){
+    $buid = organization_control_subscriber_uid_by_gid($gid);
+    $acct = user_load($buid);
+    $licenseInfo = organization_control_subscription_info($acct);
+  }
+  else{
+    global $user;
+    //get some general license info.
+    $licenseInfo = organization_control_subscription_info($user);
+    //get the buid
+    $buid = organization_control_subscriber_uid($user);
+  }
+
+  //confirm a billing UID
+  if($buid == 0){
+    $body .= "<div class='error'>There was an issue looking up the billing details of your account. Please contact an administrator.</div>";
+    $output['header'] = array(
+     '#type' => 'markup',
+     '#markup' => $headerMarkup,
+     '#weight' => '-30'
+    );
+    $output['body'] = array(
+     '#type' => 'markup',
+     '#markup' => $body,
+     '#weight' => '-20'
+    );
+    return $output;
+  }
+
+  //confirm there is not an active order.
+  $query = db_select('commerce_order','o');
+  $query->condition('o.uid',$buid);
+  $query->condition('o.type','recurring');
+  $query->condition('o.status','recurring_open');
+  $query->fields('o',array('order_id'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $body .= "<div class='error'>You account already has an active order. Please review your <a href='/my-organization/license'>license details</a>.</div>";
+    $output['header'] = array(
+     '#type' => 'markup',
+     '#markup' => $headerMarkup,
+     '#weight' => '-30'
+    );
+    $output['body'] = array(
+     '#type' => 'markup',
+     '#markup' => $body,
+     '#weight' => '-20'
+    );
+    return $output;
+  }
+
+  //confirm there is a past, inactive order.
+  $query = db_select('commerce_order','o');
+  $query->condition('o.uid',$buid);
+  $query->condition('o.type','recurring');
+  $query->join('commerce_line_item','li',"li.order_id = o.order_id AND li.type!='commerce_discount'");
+  $query->join('field_data_cl_billing_license','bl','bl.entity_id = li.line_item_id');
+  $query->join('commerce_license','l','l.license_id = bl.cl_billing_license_target_id');
+  $query->join('commerce_product','p','p.product_id = l.product_id');
+  $query->join('field_data_field_additional_seats','sterm','sterm.entity_id = l.product_id');
+  $query->join('field_data_field_total_seats','svalue','svalue.entity_id = sterm.field_additional_seats_tid');
+  $query->join('field_data_commerce_price','price','price.entity_id = l.product_id');
+  $query->join('field_data_commerce_license_duration','duration','duration.entity_id = l.product_id');
+  $query->range(0,1);
+  $query->orderBy('o.order_id','DESC');
+  $query->fields('o',array('order_id'));
+  $query->fields('svalue',array('field_total_seats_value'));
+  $query->fields('price',array('commerce_price_amount'));
+  $query->fields('duration',array('commerce_license_duration_value'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $r_order_id = $r['order_id'];
+    $seats = $r['field_total_seats_value'];
+    $cost = $r['commerce_price_amount'];
+    $duration = $r['commerce_license_duration_value'];
+  }
+  //adjust some formatting.
+  if($duration == '2592000'){
+    $duration = "Monhtly";
+  }elseif($duration=="315360000"){
+    $duration = "Yearly";
+  }elseif($duration > 315360000){
+    $duration = $duration/315360000 . " yrs";
+  }else{
+    $duration = $duration/86400 . " day(s)" ;
+  }
+  //price
+  $cost = "$".substr($cost,0,-2).".".substr($cost,-2);
+  if(!isset($r_order_id) || $r_order_id==0){
+    $body .= "<div class='error'>Your account already has an active order. Please review your <a href='/my-organization/license'>license details</a>.</div>";
+    $output['header'] = array(
+     '#type' => 'markup',
+     '#markup' => $headerMarkup,
+     '#weight' => '-30'
+    );
+    $output['body'] = array(
+     '#type' => 'markup',
+     '#markup' => $body,
+     '#weight' => '-20'
+    );
+    return $output;
+  }
+  //We passed the checks and have the order which we with to reactivate. Let them know some details, and present the button.
+  $headerMarkup .="
+    <div class='notice'>
+      <p>Please review the details below to reactivate your account.</p>
+    </div>
+
+  ";
+  $body = "
+
+    <h1>License Details</h1>
+    <p>Maximum Seats: $seats <br />
+      License Cost: $cost<br />
+      Duration/Billing Frequency: $duration<br />
+    </p>
+  ";
+  $output['header'] = array(
+     '#type' => 'markup',
+     '#markup' => $headerMarkup,
+     '#weight' => '-30'
+    );
+
+  //Remove or Modify C.C.
+  //if card on file is used
+  if(module_exists('commerce_cardonfile')){
+    $cardOnFile_view = views_embed_view('commerce_card_on_file_user_cards', 'block_1');
+    $output['dl_billing_management_remove_cardOnFile'] = array(
+      '#type' => 'markup',
+      '#markup' => $cardOnFile_view,
+      '#weight' => '-25'
+    );
+  }
+
+  //Add a new card on file.
+  if(module_exists('commerce_cardonfile')){
+    //only if their is a billing user
+      $buid = $licenseInfo['currentSubscriber']->uid;
+      $output['dl_billing_management_add_cardOnFile'] = array(
+        '#type' => 'markup',
+        '#markup' => "<p>".l(t('Add a New Credit Card'),'user/'.$buid.'/cards/add/Zv86GX2I2DTeXevedUYrgtg4gSjSQkQQ3m-N9VUGfd4')."</p>",
+        '#weight' => '-24'
+      );
+  }
+
+
+  $output['body'] = array(
+    '#type' => 'markup',
+    '#markup' => $body,
+    '#weight' => '-20'
+  );
+  $output['reactivate'] = drupal_get_form('dl_billing_management_reactivate_failed_renewal_form',$r_order_id,$gid);
+  $output['reactivate']['#weight'] = "-10";
+
+  return $output;
+}
+
+/*
+ * Form to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_reactivate_failed_renewal_form($form,&$form_state,$order_id,$gid=null){
+  //pass on some already queried info
+  $form['order_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $order_id,
+  );
+  if(!is_null($gid)){
+    $form['gid'] = array(
+      '#type' => 'hidden',
+      '#value' => $gid,
+    );
+  }
+  //submit
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Reactivate'),
+    '#attributes' => array(
+      'class' => array(
+        'button-affirmative'
+      )
+    )
+  );
+  $form_state['redirect'] = 'my-organization/my-license';
+  return $form;
+}
+
+/*
+ * Form -validate- to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_reactivate_failed_renewal_form_validate($form,&$form_state){
+  if(isset($form_state['values']['gid']) && !is_null($form_state['values']['gid'])){
+    $buid = organization_control_subscriber_uid_by_gid($form_state['values']['gid']);
+    $acct = user_load($buid);
+    $form_state['redirect'] = 'admin/commerce/orders/adjust-online-orders/'.$form_state['values']['gid'];
+  }
+  else{
+    global $user;
+    $acct = $user;
+    $buid = organization_control_subscriber_uid($user);
+    $form_state['redirect'] = 'my-organization/my-license';
+  }
+  //confirm the order was passed.
+  if(!isset($form_state['values']['order_id']) || $form_state['values']['order_id']==0){
+    form_set_error('order_id',"There was an error processing that order. Please contact an administrator");
+  }
+  $r_order = commerce_order_load($form_state['values']['order_id']);
+  //confirm the current user is either an DL admin or the order owner.
+  if(!organization_control_user_has_role('administrator',$acct) && !organization_control_user_has_role('Billing Admin',$acct) && $r_order->uid!=$buid ){
+    form_set_error('order_id',"There was an access issue with this order. Please contact an administrator");
+  }
+
+}
+
+/*
+ * Form -submit- to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_reactivate_failed_renewal_form_submit($form,&$form_state){
+  $r_order_id = $form_state['values']['order_id'];
+  $orgID = organization_control_orgID();
+  //reactivate the order
+  dl_billing_reactivate_order($r_order_id,$orgID);
+
+  //notify DL about this.
+  global $user;
+  //Output some general license info.
+  $licenseInfo = organization_control_subscription_info($user);
+  $org_name = organization_control_orgName($orgID);
+  $buid = organization_control_subscriber_uid_by_gid($orgID);
+  $from = 'no-reply@atdove.org';
+  $subject = 'Renewal Reactivation Notification';
+  $body = $org_name . ' has reactivated their paid subscription.';
+  $body .= "<table border=\"1\"><caption>Account Data</caption>";
+  $body .= "<tr><td>ORG ID</td><td>" . $orgID . "</td></tr>";
+  $body .= "<tr><td>ORG NAME</td><td>" . $org_name . "</td></tr>";
+  $body .= "<tr><td>Billing User</td><td>" . $buid . "</td></tr>";
+  $body .= "<tr><td>User</td><td>" . $user->name . "</td></tr>";
+  $body .= "<tr><td>Order Id</td><td>" . $r_order_id . "</td></tr>";
+  $body .= "<tr><td>License Id</td><td>" . $licenseInfo['license_id'] . "</td></tr>";
+  $body .= "<tr><td>License Type</td><td>" . $licenseInfo['commerce_license_duration_value'] . "</td></tr>";
+  $body .= "<tr><td>Seats</td><td>" . $licenseInfo['field_total_seats_value'] . "</td></tr>";
+  $body .= "</table>";
+
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  $to = 'info@atdove.org';
+  $message = drupal_mail('dl_billing_management', 'org_reactivation', $to, language_default(), $params, $from);
+  $li = $licenseInfo['commerce_license_duration_value'];
+  $lv = $licenseInfo['field_total_seats_value'];
+  $wdmsg = "$org_name ($orgID) with the billing user $user->name reactivated their $li account with $lv seats.";
+  watchdog('Account Reactivated', $wdmsg, array(),WATCHDOG_NOTICE);
+
+
+  //set a success message
+  drupal_set_message('Your license has been reactivated and your payment will be processed shortly.');
+//confirm expiration date was unchanged
+}
+
+/*
+ * Form to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_admin_offline_to_reactivate_online_form($form,&$form_state,$reactivate_order_id,$deactivate_order_id,$orgID){
+  //pass on some already queried info
+  $form['reactivate_order_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $reactivate_order_id,
+  );
+  $form['deactivate_order_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $deactivate_order_id,
+  );
+
+  $form['orgID'] = array(
+    '#type' => 'hidden',
+    '#value' => $orgID,
+  );
+  //submit
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Reactivate'),
+    '#attributes' => array(
+      'class' => array(
+        'button-affirmative'
+      )
+    )
+  );
+  return $form;
+}
+
+/*
+ * Form -validate- to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_admin_offline_to_reactivate_online_form_validate($form,&$form_state){
+  global $user;
+  //confirm the fields were passed.
+  if(!isset($form_state['values']['reactivate_order_id']) || $form_state['values']['reactivate_order_id']==0){
+    form_set_error('reactivate_order_id',"There was an error processing that order. Please contact an administrator. Missing Reactivate Order ID.");
+  }
+  if(!isset($form_state['values']['deactivate_order_id']) || $form_state['values']['deactivate_order_id']==0){
+    form_set_error('deactivate_order_id',"There was an error processing that order. Please contact an administrator. Missing Deactivate Order ID.");
+  }
+  if(!isset($form_state['values']['orgID']) || $form_state['values']['orgID']==0){
+    form_set_error('orgID',"There was an error processing that order. Please contact an administrator. Missing Deactivate Org ID.");
+  }
+  //confirm the current user is either an DL admin or the order owner.
+  if(!organization_control_user_has_role('administrator',$user)){
+    form_set_error('reactivate_order_id',"There was an access issue with this order. Please contact an administrator");
+  }
+
+  $form_state['redirect'] = 'admin/commerce/orders/adjust-online-orders/'.$form_state['values']['orgID'];
+}
+
+/*
+ * Form -submit- to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_admin_offline_to_reactivate_online_form_submit($form,&$form_state){
+
+  //set some variables
+  $deactivate_order_id = $form_state['values']['deactivate_order_id'];
+  $r_order_id = $form_state['values']['reactivate_order_id'];
+  $orgID = $form_state['values']['orgID'];
+
+  //we need to deactivate the current offline license (the order is already in a 'complete' state.)
+  $licenses = commerce_license_get_order_licenses($deactivate_order_id);
+  foreach($licenses as $l){
+     $l->status = COMMERCE_LICENSE_SUSPENDED;
+     $l->save();
+  }
+
+  //reactivate the order
+  dl_billing_reactivate_order($r_order_id,$orgID);
+
+  //make the product order associated with this recurring order have the status 'pending' now.
+  //we have to find this order. We know it's license by way of the $r_order
+  $query = db_select('commerce_line_item','li');
+  $query->condition('li.order_id',$r_order_id);
+  $query->condition('li.type',"commerce_discount","!=");
+  $query->join('field_data_cl_billing_license','bl','bl.entity_id = li.line_item_id');
+  $query->join('field_data_commerce_license','pl','pl.commerce_license_target_id = bl.cl_billing_license_target_id');
+  $query->join('commerce_line_item','pli','pli.line_item_id = pl.entity_id');
+  $query->fields('pli',array('order_id'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $p_order_id = $r['order_id'];
+  }
+  $p_order = commerce_order_load($p_order_id);
+  $p_order->status = 'pending';
+  commerce_order_save($p_order);
+
+  //notify DL about this.
+  global $user;
+  //Output some general license info.
+  $licenseInfo = organization_control_subscription_info($user);
+  $org_name = organization_control_orgName($orgID);
+  $buid = organization_control_subscriber_uid_by_gid($orgID);
+  $from = 'no-reply@atdove.org';
+  $subject = 'Admin Renewal Reactivation Notification';
+  $body = "A Dove Lewis Admin has reactivated " . $org_name . '\'s paid subscription.';
+  $body .= "<table border=\"1\"><caption>Account Data</caption>";
+  $body .= "<tr><td>ORG ID</td><td>" . $orgID . "</td></tr>";
+  $body .= "<tr><td>ORG NAME</td><td>" . $org_name . "</td></tr>";
+  $body .= "<tr><td>Billing User</td><td>" . $buid . "</td></tr>";
+  $body .= "<tr><td>Dove Lewis Admin</td><td>" . $user->name . "</td></tr>";
+  $body .= "<tr><td>Order Id</td><td>" . $r_order_id . "</td></tr>";
+  $body .= "<tr><td>License Id</td><td>" . $licenseInfo['license_id'] . "</td></tr>";
+  $body .= "<tr><td>License Type</td><td>" . $licenseInfo['commerce_license_duration_value'] . "</td></tr>";
+  $body .= "<tr><td>Seats</td><td>" . $licenseInfo['field_total_seats_value'] . "</td></tr>";
+  $body .= "</table>";
+
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  $to = 'info@atdove.org';
+  $message = drupal_mail('dl_billing_management', 'org_reactivation_admin', $to, language_default(), $params, $from);
+  $li = $licenseInfo['commerce_license_duration_value'];
+  $lv = $licenseInfo['field_total_seats_value'];
+  $wdmsg = "A Dove Lewis administrator has reactivated the account $org_name ($orgID) with the billing user $user->name. This is a $li account with $lv seats.";
+  watchdog('Account Reactivated', $wdmsg, array(),WATCHDOG_NOTICE);
+
+  //set a success message
+  drupal_set_message('The recurring online order has been reactivated and the payment will be processed shortly.');
+}
+
+/*
+* a form to allow admins to create billing users for an organization.
+* An org without a billing user is typically a mistake and this is a tool to fix that.
+*/
+/*
+ * Form to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_fix_bu_form($form,&$form_state,$orgID=null){
+  //pass on some already queried info
+  $form['orgID'] = array(
+    '#type' => 'hidden',
+    '#value' => $orgID,
+  );
+  //submit
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Fix Billing User Issue'),
+    '#attributes' => array(
+      'class' => array(
+        'button-affirmative'
+      )
+    )
+  );
+  return $form;
+}
+
+/*
+ * Form -validate- to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_fix_bu_form_validate($form,&$form_state){
+  global $user;
+  //confirm the fields were passed.
+  if(!isset($form_state['values']['orgID']) || $form_state['values']['orgID']==0){
+    form_set_error('orgID',"There was an error finding this user's organization.");
+  }
+  //confirm the current user is either an DL admin or the order owner.
+  if(!organization_control_user_has_role('administrator',$user)){
+    form_set_error('orgID',"There was an access issue with this action.");
+  }
+  $form_state['redirect'] = 'admin/commerce/orders/adjust-online-orders/'.$form_state['values']['orgID'];
+}
+
+/*
+ * Form -submit- to queue a failed order for an attempted renewal
+*/
+function dl_billing_management_fix_bu_form_submit($form,&$form_state){
+
+  //set some variables
+  $orgID = $form_state['values']['orgID'];
+
+  //create billing user
+  $new_user_billing = dl_billing_management_create_billing_user($orgID);
+
+  //Assign billing user to this org
+  $new_user_billing->og_user_node['und'][0]['target_id'] = $orgID;
+  user_save($new_user_billing);
+  $new_user_billing = user_load($new_user_billing->uid);
+
+  //Make billing user have the proper OG role
+  dl_billing_management_make_org_admin($new_user_billing->uid, $orgID);
+
+  //set a success message
+  drupal_set_message('A billing user was created for this organization.');
+}
+
+
+
+function dl_billing_reactivate_order($r_order_id,$orgID){
+
+  //load the order we are reactivating.
+  $r_order = commerce_order_load($r_order_id);
+  //update the order status
+  $r_order->status = 'recurring_open';
+  //Set to autorenew
+  //load the current billing cycle
+  $billing_cycle_id = $r_order->cl_billing_cycle['und'][0]['target_id'];
+  $billing_cycle = entity_load_single('cl_billing_cycle', $billing_cycle_id);
+  //update the billing cycle status and date
+    //Leave the date expired but update it to this moment. Otherwise, if it had expired multiple billing cycles ago, they could end up being billed multiple times until they catch up.
+  $billing_cycle->status = 1;
+  if($billing_cycle->end < time()){
+    $billing_cycle->end = time();
+  }
+  $billing_cycle->save();
+
+  //confirm license is active
+  $query = db_select('field_data_cl_billing_license','bcl');
+  $query->join('commerce_line_item','cl','cl.line_item_id = bcl.entity_id AND cl.order_id = '.$r_order_id);
+  $query->fields('bcl',array('cl_billing_license_target_id'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $license_id = $r['cl_billing_license_target_id'];
+  }
+  $ls = entity_load('commerce_license',array($license_id));
+  foreach($ls as $l){
+    $l->activate();
+    //Leave the date expired but update it to this moment. Otherwise, if it had expired multiple billing cycles ago, they could end up being billed multiple times until they catch up.
+    if($l->expires < time()){
+      $l->expires = time();
+    }
+    $l->save();
+  }
+  //save the order
+  commerce_order_save($r_order);
+  //grant role access (can be revoked later if failed.)
+  dl_billing_management_activate_group_users($orgID);
+}
+
+/*
+ * An admin page to temporally grant an exising organization full acces.
+*/
+
+function dl_billing_management_grant_organization_page(){
+
+}
+
+/*
+ * Grant the subscriber role to all users of a group.
+*/
+function dl_billing_management_activate_group_users($gid){
+  $query = db_select("og_membership", "ogm");
+  $query->condition("ogm.gid", $gid, "=");
+  $query->condition("ogm.entity_type","user", "=");
+  $query->fields("ogm", array("etid"));
+  //To try to save resourcs, filter out those that have the role already.
+  $query->leftjoin('users_roles','ur','ur.uid = ogm.etid AND ur.rid = 6');
+  $query->isNULL('ur.rid');
+  $result = $query->execute();
+  if($result->rowCount()>0){
+    $uids = implode(",", $result->fetchCol());
+    $roleResults = user_multiple_role_edit(explode(",",$uids),'add_role',6);
+  }
+}
+
+/*
+ * Revoke the subscriber role to all users of a group.
+*/
+function dl_billing_management_deactivate_group_users($gid){
+  $query = db_select("og_membership", "ogm");
+  $query->condition("ogm.gid", $gid, "=");
+  $query->condition("ogm.entity_type","user", "=");
+  $query->fields("ogm", array("etid"));
+  $result = $query->execute();
+  $uids = implode(",", $result->fetchCol());
+  $roleResults = user_multiple_role_edit(explode(",",$uids),'remove_role',6);
+}
+
+/*
+ * Revoke users the subscriber role to all users of a group.
+*/
+function dl_billing_management_deactivate_users($uids){
+  $roleResults = user_multiple_role_edit(explode(",",$uids),'remove_role',6);
+}
+
+function dl_billing_management_deactivate_analyze_for_nobilling($gid){
+  //see if this org has a billing user
+  $queue = DrupalQueue::get('revoke_subscription_roles');
+  $query = db_select('og_membership','m');
+  $query->join('users_roles','r','r.uid = m.etid AND r.rid = 10');
+  $query->condition('m.field_name','og_user_node');
+  $query->condition('m.entity_type','user');
+  $query->condition('m.gid',$gid);
+  $query->fields('m',array('etid'));
+  $results = $query->execute();
+  if($results->rowCount()==0){
+    $queue->createItem($gid);
+  }else{
+  }
+}
+
+/*
+* This function finds the license for a gid and expires it.
+*/
+function dl_billing_management_expire_by_license_id($license_id){
+  $license = entity_load_single('commerce_license', $license_id);
+  if($license === false){
+    return false;
+  }
+  $license->status = COMMERCE_LICENSE_EXPIRED;
+  $license->save();
+  if($license === false || $license->status != COMMERCE_LICENSE_EXPIRED){
+    return false;
+  }
+  return true;
+}
+
+
+/*
+* This function finds all active licenses who's billing order is not active and is expired and is past the 5 day grace period.
+*/
+function dl_billing_managment_licenses_expire_all(){
+  //get the grace period
+  $gracePeriod = variable_get('dl_billing_grace_period', 432000);
+  //set the queue action
+  $queue = DrupalQueue::get('expire_licenses');
+  //find all licenses
+  $query = db_select('commerce_license','l');
+  //and the team they belong to
+  $query->join('og_membership','m','m.etid = l.uid');
+  //licenses older than grace period (and hence expired)
+  $query->condition('l.expires',time()-$gracePeriod,'<');
+  //licenses still marked active
+  $query->condition('l.status',COMMERCE_LICENSE_ACTIVE);
+  $query->fields('l',array('license_id'));
+  $query->fields(m,array('gid'));
+  $query->groupby('l.license_id');
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $queue->createItem($r['license_id']);
+  }
+  variable_set('cron_licenses_expire_lastrun',time());
+}
+
+/*
+* This function finds all active accounts and confirmes those users have the proper role
+*/
+function dl_billing_management_subscriber_activation_all(){
+  //find all groups with an active subscription.
+  $gid = 0;
+  $output = "";
+  $queue = DrupalQueue::get('confirm_subscription_roles');
+  $query = db_select('commerce_license','l');
+  $query->condition('l.status',COMMERCE_LICENSE_ACTIVE);
+  $query->fields('m',array('gid'));
+  $query->join('og_membership','m',"m.etid = l.uid AND m.field_name='og_user_node' AND m.entity_type='user'");
+
+  $query->join('og_membership','m2',"m2.gid = m.gid AND m.field_name='og_user_node' AND m.entity_type='user'");
+  $query->leftjoin('users_roles','r',"r.uid = m2.etid AND r.rid = 6");
+  $query->isNull('r.rid');
+  $query->groupby('m.gid');
+
+  $results = $query->execute();
+  $gids = array();
+  while($r = $results->fetchAssoc()){
+    $gid = $r['gid'];
+    if($gid >0){
+      $gids[] = $gid;
+      $queue->createItem($gid);
+    }
+  }
+  variable_set('cron_activation_all_lastrun',time());
+}
+
+/*
+* This function finds all inactive accounts and confirmes those users have the proper role
+*/
+function dl_billing_management_subscriber_deactivation_all(){
+
+    //set some vars and the queue item
+    $gid = 0;
+    $gids1 = array();
+    $queue = DrupalQueue::get('revoke_subscription_roles');
+    //find all groups with a billing user but no license
+      //AKA, They have either:
+        //only expired licesnses
+        //no license at all
+      //Note the expresion ($query->isNull('l.license_id');)
+    $gid = 0;
+    $queue = DrupalQueue::get('revoke_subscription_roles');
+    $query = db_select('og_membership','m');
+    $query->condition('m.field_name','og_user_node');
+    $query->condition('m.entity_type','user');
+    $query->join('users_roles','r','r.uid = m.etid and  r.rid=10');
+    $query->leftjoin('commerce_license','l','l.uid = r.uid and l.status='.COMMERCE_LICENSE_ACTIVE);
+
+    $query->join('og_membership','m2',"m2.gid = m.gid AND m2.field_name='og_user_node' AND m2.entity_type = 'user' ");
+    $query->join('users_roles','r2','r2.uid = m2.etid and  r2.rid=6');
+
+    $query->groupby('m.gid');
+    $query->isNull('l.license_id');
+    $query->fields('m',array('gid'));
+    $results = $query->execute();
+    $count = 0;
+    while($r = $results->fetchAssoc()){
+      $gid = $r['gid'];
+      if($gid >0){
+        $queue->createItem($gid);
+        if(!in_array($gid, $gids1)){
+          $gids1[$gid] = $gid;
+        }
+      }
+    }
+
+    //reset some vars and the queue item
+    $gid = 0;
+    $gids2 = array();
+
+    $output = "";
+    $queue = DrupalQueue::get('analyze_for_nobilling_revoke_subscription_roles');
+    //find all groups with no billing user
+    //I had a hard time doing this in one queryString
+    $query = db_select('og_membership','m');
+    $query->condition('m.field_name','og_user_node');
+    $query->condition('m.entity_type','user');
+    $query->condition('m.etid',1,'!=');
+    $query->fields('m',array('gid'));
+    $query->join('users_roles','r2','r2.uid = m.etid and  r2.rid=6');
+    $query->groupby('m.gid');
+    $results = $query->execute();
+    $count = 0;
+    while($r = $results->fetchAssoc()){
+      $queue->createItem($r['gid']);
+      if(!in_array($r['gid'], $gids2)){
+        $gids2[$r['gid']] = $r['gid'];
+      }
+    }
+
+    //reset some vars and the queue item
+    $queue = DrupalQueue::get('revoke_subscription_roles_user');
+    //find all users not in a group
+    $query = db_select('users','u');
+    $query->fields('u',array('uid'));
+    $query->leftjoin('og_membership','m',"m.etid = u.uid AND m.field_name='og_user_node' AND m.entity_type='user'");
+    $query->join('users_roles','r',"r.rid = 6 and r.uid = u.uid");
+    $query->isNull('m.gid');
+    $results = $query->execute();
+    $uids = implode(",", $results->fetchCol());
+    $queue->createItem($uids);
+
+// watchdog('deactivate','groups1',$gids1);
+// watchdog('deactivate','groups2',$gids2);
+// watchdog('deactivate','users',$uids);
+    //update the cron tracking variable.
+    variable_set('cron_deactivation_all_lastrun',time());
+}
+/*
+* This function finds all authorizations that have been made for free trials and releases them
+*/
+function dl_billing_management_release_free_trial_authorizations(){
+  //start a queue
+  $queue = DrupalQueue::get('release_authorization');
+  //find all open transactions
+  $query = db_select('commerce_payment_transaction','t');
+  $query->condition('t.status','pending');
+  $query->condition('t.remote_status','auth_only');
+  $query->condition('t.instance_id','authnet_aim|commerce_payment_authorize_net_aim_credit_card_auth_only');
+  //transactions before this had been manually voided
+  $query->condition('t.transaction_id','36883','>');
+  $query->fields('t',array('transaction_id'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $queue->createItem($r['transaction_id']);
+  }//end loop through open authorizations
+  variable_set('cron_release_free_trial_authorizations',time());
+  variable_set('cron_release_free_trial_authorization_last_run',true);
+}
+
+/*
+ * The commerce login module allows a user to login during checkout
+*/
+function dl_billing_management_release_authorization($transaction_id){
+    //transactions before this had been manually voided
+    if($transaction_id<'36883'){
+      return'';
+    }
+    //load the transation
+    $transaction = commerce_payment_transaction_load($transaction_id);
+    // Build a name-value pair array for this transaction.
+    $nvp = array(
+      'x_type' => 'VOID',
+      'x_trans_id' => $transaction->remote_id,
+    );
+    $payment_method = commerce_payment_method_instance_load($transaction->instance_id);
+    // Submit the request to Authorize.Net.
+    $response = commerce_authnet_aim_request($payment_method, $nvp);
+    // Update and save the transaction based on the response.
+    $transaction->payload[REQUEST_TIME] = $response;
+    // If we got an approval response code... or the transaction could not be found
+    if ($response[0] == 1 || ($response[0] != 1 && $response[3]=="The transaction cannot be found.") ) {
+      // Set the remote and local status accordingly.
+      $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
+      $transaction->remote_status = $response[11];
+      // Update the transaction message to show that it has been voided.
+      $transaction->message .= '<br />' . t('Voided: @date', array('@date' => format_date(REQUEST_TIME, 'short')));
+      // Zero out transaction amount before saving,
+      // so original amount is not saved as a positive revenue transaction.
+      // Authorize.Net settles these as "0.00" (see the payload on a void response).
+      $transaction->amount = '000';
+    }
+    commerce_payment_transaction_save($transaction);
+}
+/*
+* This function finds all authorizations that have been made for free trials and releases them
+*/
+function dl_billing_management_abandoned_groups(){
+  $queue = DrupalQueue::get('abandoned_cancel_group_billing');
+  //find all active billing accounts
+  $query = db_select('og_membership','bm');
+  $query->join('cl_billing_cycle','bc',"bc.uid = bm.etid AND bc.status = '1'");
+  $query->leftjoin('og_membership','tm',"tm.gid = bm.gid AND tm.field_name = 'og_user_node' AND tm.etid != bm.etid");
+  $query->condition('bm.field_name',"og_user_node");
+  $query->fields('bm',array('etid'));
+  $query->isNULL('tm.etid');
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $queue->createItem($r['etid']);
+  }
+  variable_set('cron_abandoned_groups',time());
+}
+
+/*
+* This function finds all authorizations that have been made for free trials and releases them
+*/
+function dl_billing_management_adminless_groups(){
+
+  $queue = DrupalQueue::get('check_for_adminless');
+
+  //find all active billing accounts an test them
+  $query = db_select('cl_billing_cycle','bc');
+  $query->condition('bc.status','1');
+  $query->fields('bc',array('uid'));
+  $query->fields('m',array('gid'));
+  $query->join('og_membership','m',"m.etid = bc.uid AND m.field_name = 'og_user_node'");
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $queue->createItem($r['uid']);
+  }
+  variable_set('cron_adminless_groups',time());
+}
+
+/*
+* This function finds all authorizations that have been made for free trials and releases them
+*/
+function dl_billing_management_adminless_groups_check_by_buid($uid){
+
+    $queue = DrupalQueue::get('abandoned_cancel_group_billing');
+
+    $query = db_select('og_membership','bm');
+    $query->fields('tm',array('etid'));
+    $query->join('og_membership','tm',"tm.gid = bm.gid AND tm.field_name = 'og_user_node'");
+    $query->join('og_users_roles','gr',"gr.uid = tm.etid AND gr.rid = '3'");
+    $query->leftjoin('users_roles','ur',"ur.uid = tm.etid AND ur.rid = '10'");
+    $query->join('og_membership','tm',"tm.gid = bm.gid AND tm.field_name = 'og_user_node'");
+    $query->condition('bm.etid',$uid);
+    $query->condition('bm.field_name',"og_user_node");
+    $query->isNULL('ur.rid');
+    $results = $query->execute();
+    if($results->rowCount() === 0){
+      $queue->createItem($uid);
+    }
+}
+
+function dl_billing_management_abandoned_groups_cancel_billing($buid){
+  $bu = user_load($buid);
+  //cancel the renewal and the order
+  dl_billing_management_cancel_renewal_and_order($buid);
+  // email info@atdove.org about the non-renewal.
+  $org_id = organization_control_orgID($bu);
+  $org_name = organization_control_orgName($org_id);
+  $from = 'no-reply@atdove.org';
+  $subject = 'Abandoned Group - Renewal stop notification';
+  $body = $org_name . ' has been abandonded and their license will not renew.';
+  $body .= "<table border=\"1\"><caption>Account Data</caption>";
+  $body .= "<tr><td>ORG ID</td><td>" . $org_id . "</td></tr>";
+  $body .= "<tr><td>ORG NAME</td><td>" . $org_name . "</td></tr>";
+  $body .= "<tr><td>Billing User</td><td>" . $bu->name . "</td></tr>";
+  $body .= "<tr><td>License Id</td><td>" . $licenseInfo['license_id'] . "</td></tr>";
+  $body .= "<tr><td>License Type</td><td>" . $licenseInfo['commerce_license_duration_value'] . "</td></tr>";
+  $body .= "<tr><td>Seats</td><td>" . $licenseInfo['field_total_seats_value'] . "</td></tr>";
+  $body .= "</table>";
+
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  $to = 'info@atdove.org';
+  $message = drupal_mail('dl_billing_management', 'dont_renew', $to, language_default(), $params, $from);
+}
+
+
+
+/*
+ * The commerce login module allows a user to login during checkout
+*/
+function dl_billing_management_form_commerce_checkout_form_alter(&$form,&$form_state){
+  if(!empty($form['account'])){
+    $form['account']['password_confirm']['#type'] = 'password_confirm';
+    $form['account']['password_confirm']['#description'] = t('Re-enter your password for confirmation');
+    $form['account']['password_confirm']['#required'] = TRUE;
+    $form['customer_profile_billing']['commerce_customer_address']['und']['0']['organisation_name']['#required'] = TRUE;
+    array_unshift($form['buttons']['continue']['#validate'],'dl_billing_management_account_validate');
+    $form['buttons']['continue']['#submit'][] = 'dl_billing_management_account_submit';
+  } else {
+    $form['customer_profile_billing']['commerce_customer_address']['und']['0']['organisation_name']['#required'] = TRUE;
+  }
+}
+
+/**
+ * Checkout pane validation override to ensure valid shipping method for address
+ */
+function dl_billing_management_account_validate(&$form, &$form_state) {
+  // Do some validation tests here... omitted for brevity.
+  // Check the form state to see if an e-mail address has been specified.
+    if(empty($form_state['values']['customer_profile_billing']['commerce_customer_address']['und']['0']['organisation_name'])){
+      form_set_error("organisation_name","Company name is a requried field");
+    }
+    if(empty($form_state['values']['customer_profile_billing']['commerce_customer_address']['und']['0']['first_name'])){
+      form_set_error("first_name","First Name is a requried field");
+    }
+    if(empty($form_state['values']['customer_profile_billing']['commerce_customer_address']['und']['0']['last_name'])){
+      form_set_error("last_name","Last Name is a requried field");
+    }
+
+    if (!empty($form_state['values']['account']['login']) || !empty($form_state['order']->mail)) {
+      $mail = !empty($form_state['values']['account']['login']) ? trim($form_state['values']['account']['login']['mail']) : $form_state['order']->mail;
+      // Don't attempt to load the user for an invalid e-mail address.
+      if ($error = user_validate_mail($mail)) {
+        form_set_error("login", t("$error"));
+      }
+      elseif ($account = user_load_by_mail($mail)) {
+        // If a user already exists for the given e-mail address, display a
+        // message letting the customer know this.
+        $form_state['values']['account']['login'] = "";
+        $form_state['order']->mail = "";
+        form_set_error("login",t('There is already an account registered to %mail. Please use a new email addres to create a new account or contact Dove Lewis to reactivate your subscription.', array('%mail' => $mail)));
+      }
+    }
+}
+
+/**
+ * Checkout pane validation override to ensure valid shipping method for address
+ */
+function dl_billing_management_account_submit($form, &$form_state){
+  global $user;
+  user_save($user,array('pass'=>$form_state['values']['account']['password_confirm']));
+}
+
+
+/*
+ * For a moment between when an order is authorized and when the account is created the
+ * stored credit card is assied to use zero. To prevent it from loading in other anonyomus
+ * users cart's we will always prevent it for user 0
+*/
+function dl_billing_management_commerce_cardonfile_checkout_pane_form_alter(&$form,&$form_state){
+  global $user;
+  if($user->uid == 0){
+    unset($form['cardonfile']);
+    $form['cardonfile']['#type'] = 'value';
+    $form['cardonfile']['#value'] = 'new';
+    $form['credit_card']['#access'] = TRUE;
+    $form['cardonfile_instance_default']['#default_value'] = true;
+  }
+}
+
+/*
+ * Look the most recent recurring order based on associated license_id
+*/
+function dl_billing_management_get_r_order_id_by_license_id($license_id){
+  $query = db_select('field_data_cl_billing_license','fbl');
+  $query->join('commerce_line_item','li','li.line_item_id = fbl.entity_id');
+  $query->fields('li',array('order_id'));
+  $query->condition('fbl.cl_billing_license_target_id',$license_id);
+  $query->range(0,1);
+  $query->orderBy('fbl.entity_id','DESC');
+  $results = $query->execute();
+  $order_id = 0;
+  while($r = $results->fetchAssoc()){
+    $order_id = $r['order_id'];
+  }
+  return $order_id;
+}
+
+// Get all active licenses associated with a recurring order and suspend them
+function dl_billing_management_recurring_order_suspend_licenses($order_id) {
+  //find associated licenses
+  $query = db_select('commerce_license','l');
+  $query->join('field_data_cl_billing_license','fl','fl.cl_billing_license_target_id = l.license_id');
+  $query->join('commerce_line_item','li','fl.entity_id = li.line_item_id and li.order_id = '.$order_id);
+  $query->condition('l.status',"2");
+  $query->fields('l',array('license_id'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()) {
+    $l = entity_load_single('commerce_license', $r['license_id']);
+    commerce_license_suspend_action($l);
+  }
+}
+
+// Get all active billing cycles associated with a recurring order and suspend them
+function dl_billing_management_get_recurring_cancel_billing_cycles($order_id) {
+  //find associated licenses
+  $query = db_select('cl_billing_cycle','bc');
+  $query->join('field_data_cl_billing_cycle','fbc','fbc.cl_billing_cycle_target_id = bc.billing_cycle_id AND fbc.entity_id = '.$order_id);
+  $query->condition('bc.status',"1");
+  $query->fields('bc',array('billing_cycle_id'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()) {
+    $bc = entity_load_single('cl_billing_cycle', $r['billing_cycle_id']);
+    $bc->status=0;
+    $bc->save();
+  }
+}
+
+
+/*
+ * On a couple of occasions we have found an account with an recurring order stuck in a
+ * recurring_payment_pending status. The associated billing cycles are not active and the
+ * license is expired.
+ *
+ * Using the normal "modify online order" process to 'reactive' the order fails.
+ * This 'reactivate' functionality assumes the last recurring order was not charnged (that
+ * the order was 'deactivated' beforehand. But in this instance, the last recurring order,
+ * which is the same as the recurring_payment_pending order, was successfully charnged.
+ * It should have been marked 'completed' and a new order created with 'recurring_open'
+ * (not been charged). Since this failed to happen, even when reactivated the system sees
+ * that order was previously charnged and skips it
+ *
+ * This is a fix.
+ *    This puts that last order in the status 'completed'.
+ *    Reactivates the license
+ *    Create the new (next) recurring_open order.
+ *
+ * TO-DO: Right now this function works by passing the build, p_order, and r_order. Its
+ * typically run from the testbed. That data is gathered manually in a debug process or
+ * within the testbed.
+ *
+ * It could automate this and search for any order that has the status recurring_payment_pending
+ * and apply this fix. Right now, since we are unsure why orders are getting stuck in
+ * recurring_payment_pending I am hesitant to automate a fix. But it could be done easily.
+ *
+ * Keep in mind, out of thousands of orders, this has affected 10. 7 of which happened on
+ * the same day.
+ *
+ * If we do automate, consider batch.
+ *
+ */
+
+function dl_billing_management_fix_recurring_payment_pending($buid,$p_order_id,$r_order_id){
+
+    //Confirm this is still an issue (a small, not complete, check that this has not already been run for these orders
+    $sql = db_select('commerce_order','o');
+    $sql->fields('o',array('order_id'));
+    $sql->condition('o.status','recurring_payment_pending');
+    $sql->condition('o.order_id',$r_order_id);
+    $results = $sql->execute();
+    if($results->rowCount()>0){
+
+      //change the status of the old/wrong r_order.
+      $r_order = commerce_order_load($r_order_id);
+      commerce_order_status_update($r_order, 'completed');
+
+      //create the new r_order
+      $p_order = commerce_order_load($p_order_id);
+      dl_billing_create_recurring_from_existing_product_order($p_order);
+
+      //update the license.
+      $licenses = commerce_license_get_order_licenses($p_order);
+      //adjust the expiration time if needed
+      foreach($licenses as $l){
+        if($l->expires<time()){
+          $l->expires = time();
+        }
+        //activate the license
+        $l->status = COMMERCE_LICENSE_ACTIVE;
+        $l->save();
+      }
+      //grant the role
+      $gid = organization_control_orgID(user_load($buid));
+      dl_billing_management_activate_group_users($gid);
+
+    }
+}
+
+/*
+* TESTBED
+*/
+function dl_billing_management_testbed(){
+
+    $output = "<h1>Billing Test Bed - Default Card On File Fix</h1>";
+
+    $outputStr = $output;
+    $content = array();
+    $content['outputStr'] = array(
+        '#markup' => $outputStr,
+        '#type' => 'markup',
+    );
+
+    $content['dl_billing_management_billing_testbed_cof_default_fix_form'] = drupal_get_form('dl_billing_management_billing_testbed_cof_default_fix_form');
+
+    return $content;
+
+}
+
+function dl_billing_management_billing_testbed_cof_default_fix_form($form,&$form_state) {
+    $form['go'] = array (
+        '#type' => 'submit',
+        '#value' => t('Fix Card on File Default Cards'),
+        '#attributes' => array(
+            'class' => array(
+                'button-affirmative'
+            )
+        )
+    );
+    return $form;
+}
+
+function dl_billing_management_billing_testbed_cof_default_fix_form_submit() {
+
+  //find all accounts that don't have a default card on file and only have one card on file
+  $accts_to_update = db_query("SELECT
+            cof.card_id,
+            cof.uid
+          FROM
+            commerce_cardonfile as cof
+          LEFT JOIN
+            commerce_cardonfile as cof2
+              ON
+            cof2.uid = cof.uid
+            AND
+            cof2.`card_id` != cof.`card_id`
+          WHERE
+            cof2.card_id IS NULL
+            and
+            cof.instance_default = 0");
+  while($r = $accts_to_update->fetchAssoc()){
+
+    $card_update = db_update('commerce_cardonfile') // Table name no longer needs {}
+    ->fields(array(
+      'instance_default' => 1,
+      'status' => 1,
+    ))
+      ->condition('card_id',  $r['card_id'])
+      ->execute();
+
+    drupal_set_message("Card ".$r['card_id']." for user ".$r['uid']." was updated to the default card.");
+
+  }
+
+}

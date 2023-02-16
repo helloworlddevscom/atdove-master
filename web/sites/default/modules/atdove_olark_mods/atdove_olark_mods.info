@@ -1,0 +1,4 @@
+name = atDove olark module modifications
+description = "Alterations to olark module."
+core = 7.x
+package = "atDove Customization"

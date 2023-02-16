@@ -1,0 +1,17 @@
+diff --git a/includes/commerce_discount.admin.inc b/includes/commerce_discount.admin.inc
+index 917dcd6..c4b3c39 100644
+--- a/includes/commerce_discount.admin.inc
++++ b/includes/commerce_discount.admin.inc
+@@ -66,8 +66,10 @@ public function hook_menu() {
+       'title' => 'List',
+       'type' => MENU_DEFAULT_LOCAL_TASK,
+     );
+-    $items[$this->path . '/add']['title callback'] = 't';
+-    $items[$this->path . '/import']['title callback'] = 't';
++    unset($items[$this->path . '/add']['title callback']);
++    unset($items[$this->path . '/import']['title callback']);
++    unset($items[$this->path . '/add']['title arguments']);
++    unset($items[$this->path . '/import']['title arguments']);
+     $items[$this->path . '/add']['title'] = 'Add discount';
+     $items[$this->path . '/import']['title'] = 'Import discount';
+ 

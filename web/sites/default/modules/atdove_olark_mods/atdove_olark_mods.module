@@ -1,0 +1,72 @@
+<?php
+
+/**
+ * Implements hook_page_alter().
+ * This is a copy of the Olark module function of the same name with mods specific for atdove
+ */
+function atdove_olark_mods_page_alter(&$page) {
+
+  if (!variable_get('olark_enable', 1) || !olark_check_role_access()) {
+    return;
+  }
+
+  // Return early if olark is not enabled for admin and we are on an admin path.
+  if (!variable_get('olark_enable_admin', FALSE) && path_is_admin(current_path())) {
+    return;
+  }
+
+  // If the context plugin exists and the result is false return early.
+  if (variable_get('olark_context', 0) && module_exists('context')) {
+    $plugin = context_get_plugin('reaction', 'olark_add');
+    if ($plugin && !$plugin->execute()) {
+      return;
+    }
+  }
+
+  global $user;
+  $user_fields = user_load($user->uid);
+  $setting = array('olark' => array());
+
+  // If the user is logged in, let's get some pertinent information and
+  // pass it along as well.
+  if ($user->uid) {
+    $setting['olark']['uid'] = $user->uid;
+    $fullname = "";
+    if(isset($user_fields->field_first_name['und'][0]['value'])){
+      $fullname =  $user_fields->field_first_name['und'][0]['value'];
+    }
+    if(isset($user_fields->field_last_name['und'][0]['value'])){
+      $fullname =  $fullname . " " . $user_fields->field_last_name['und'][0]['value'];
+    }
+    $setting['olark']['name'] = $fullname;
+    $setting['olark']['mail'] = $user->mail;
+    $setting['olark']['roles'] = t('roles @roles', array('@roles' => implode(', ', $user->roles)));
+    $setting['olark']['userpage'] = url('user/' . $user->uid, array('absolute' => TRUE));
+    $setting['olark']['loggedinas'] = t('logged in as !link', array(
+      '!link' => l($user->name, 'user/' . $user->uid, array('absolute' => TRUE)),
+    ));
+  }
+
+  $setting['olark']['disable_ios'] = variable_get('olark_ios', '');
+  $setting['olark']['enabled'] = variable_get('olark_enable', 1);
+
+  // Add the JavaScript to page.
+  $olark_code = variable_get('olark_code', '');
+  $page['page_bottom']['tns'] = array(
+    '#markup' => $olark_code,
+    '#access' => !empty($olark_code),
+    '#attached' => array(
+      'js' => array(
+        array(
+          'type' => 'file',
+          'scope' => 'footer',
+          'data'  => drupal_get_path('module', 'olark') . '/js/olark.js',
+        ),
+        array(
+          'type' => 'setting',
+          'data' => $setting,
+        ),
+      ),
+    ),
+  );
+}

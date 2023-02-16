@@ -1,0 +1,85 @@
+<?php
+
+/**
+ * @file dl_billing_import.module
+ * This module moves customer data from the old CMS into the new Drupal Commerce site. 
+ * This data was too specific and require manipulation to use feeds. 
+ */
+function dl_billing_import_menu() {
+  $items = array();
+  $items['billing-import/testbed'] = array(
+    'title' => 'Dev Test Bed',
+    'page callback' => 'dl_billing_import_testbed',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['billing-import/fixes'] = array(
+    'title' => 'Billing Import Fixes',
+    'description' => 'Billing Import Fixes',
+    'page callback' => 'dl_billing_import_fix_page',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  
+  return $items;
+}
+
+function dl_billing_import_fix_page(){
+  $output = array();
+  $output['dl_billing_import_fix_form'] = drupal_get_form('dl_billing_import_fix_form');
+  return $output;
+}
+
+function dl_billing_import_fix_form($form,$form_state){
+  $form = array();
+  $form['header'] = array(
+    '#type' => 'markup',
+    '#markup' => '<h1>Billing Import Fixes</h1>',
+  );
+  $form['source'] = array(
+    '#type' => 'select',
+    '#title' => t('Which Fix?'),
+    '#options' => array(
+      'fix_15'=>'15 Fix jwalters orders which I tried to manually fix the day before. (I fixed the licenses but not the order statuses',
+    ),
+    '#required' => TRUE,
+  );
+  $form['submit'] = array(    
+    '#type' => 'submit',
+    '#value' => t('Run Fix'),
+  );
+  return $form;
+} 
+
+function dl_billing_import_fix_form_submit(&$form,&$form_state){
+  $fixID = $form_state['values']['source'];
+  $function = "dl_billing_import_".$fixID;
+  $function();
+  drupal_set_message('Fix has completed');
+} 
+
+/*
+* disables orders that are delayeds 
+*/
+function dl_billing_import_fix_15(){  
+  //set the recurring order status
+  $rorder = commerce_order_load(8561);
+  commerce_order_status_update($rorder, 'recurring_open');
+   
+  //set the product order status
+  $porder = commerce_order_load(7496);
+  commerce_order_status_update($porder, 'pending');
+   
+}
+
+/* 
+ * Development test bed. Create an order programatically
+*/
+function dl_billing_import_testbed(){
+  $output = "<h1>Billing Import Testbed</h1>";
+
+  $output .= '<h2>FIN</h2>';
+  return $output;
+}

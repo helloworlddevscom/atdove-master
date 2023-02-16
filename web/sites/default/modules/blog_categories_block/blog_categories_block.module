@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Blog Categories Block feature.
+ */
+
+include_once 'blog_categories_block.features.inc';

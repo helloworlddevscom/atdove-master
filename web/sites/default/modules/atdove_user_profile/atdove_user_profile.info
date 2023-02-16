@@ -1,0 +1,4 @@
+name = atDove user profile modifications
+description = "Alterations to the user profile."
+core = 7.x
+package = "atDove Customization"

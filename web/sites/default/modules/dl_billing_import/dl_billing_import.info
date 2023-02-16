@@ -1,0 +1,5 @@
+name = atDove User Billing Import
+description = This module moves customer data from the old CMS into the new Drupal Commerce site. This data was too specific and require manipulation to use feeds. 
+core = 7.x
+package = atDove Customization
+version = "7.x-1.00"

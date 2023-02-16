@@ -1,0 +1,4 @@
+name = Dove Transactional Emails
+description = "Configuration for transactional emails to be sent through Mandrill."
+core = 7.x
+package = Mandrill

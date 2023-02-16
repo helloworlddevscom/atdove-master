@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Testimonial View feature.
+ */
+
+include_once 'testimonial_view.features.inc';

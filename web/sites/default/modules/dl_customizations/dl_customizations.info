@@ -1,0 +1,6 @@
+name = atDove Custom Functions, etc.
+description = Provides a some general customizations for Dove Lewis
+core = 7.x
+package = atDove Customization
+version = "7.x-1.00"
+scripts[] = dl_customizations.js

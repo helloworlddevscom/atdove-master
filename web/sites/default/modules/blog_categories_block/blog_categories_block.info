@@ -1,0 +1,8 @@
+name = Blog Categories Block
+description = Blog Categories Block
+core = 7.x
+package = Features - Content
+features[ctools][] = views:views_default:3.0
+features[features_api][] = api:2
+features[views_view][] = blog_categories_block
+features_exclude[dependencies][views] = views

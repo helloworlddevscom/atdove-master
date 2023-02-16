@@ -1,0 +1,15 @@
+name = reimport_taxonomy
+core = 7.x
+package = Features
+dependencies[] = ctools
+dependencies[] = feeds
+dependencies[] = feeds_tamper
+features[ctools][] = feeds:feeds_importer_default:1
+features[ctools][] = feeds_tamper:feeds_tamper_default:2
+features[features_api][] = api:2
+features[feeds_importer][] = articles_taxonomy_only
+features[feeds_importer][] = blogs_taxonomy_only
+features[feeds_importer][] = videos_taxonomy_only
+features[feeds_tamper][] = articles_taxonomy_only-related_tags-explode
+features[feeds_tamper][] = blogs_taxonomy_only-related_tags-explode
+features[feeds_tamper][] = videos_taxonomy_only-related_tags-explode

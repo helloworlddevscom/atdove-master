@@ -1,0 +1,13 @@
+diff --git a/print_pdf/lib_handlers/print_pdf_dompdf/print_pdf_dompdf.pages.inc b/print_pdf/lib_handlers/print_pdf_dompdf/print_pdf_dompdf.pages.inc
+index 22d031f..0442f1a 100644
+--- a/print_pdf/lib_handlers/print_pdf_dompdf/print_pdf_dompdf.pages.inc
++++ b/print_pdf/lib_handlers/print_pdf_dompdf/print_pdf_dompdf.pages.inc
+@@ -64,7 +64,7 @@ function print_pdf_dompdf_print_pdf_generate($html, $meta, $paper_size = NULL, $
+   }
+   else {
+     // Version of dompdf is >= 0.7.
+-    $tool_path = dirname($pdf_tool[1]) . '/../autoload.inc.php';
++    $tool_path = dirname($pdf_tool[1]) . '/../../../../autoload.inc.php';
+     if (file_exists($tool_path)) {
+       require_once $tool_path;
+     }

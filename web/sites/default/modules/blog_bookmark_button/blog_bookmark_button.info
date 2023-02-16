@@ -1,0 +1,9 @@
+name = Blog Bookmark Button
+description = Blog Bookmark Button
+core = 7.x
+package = Features - Content
+dependencies[] = views
+features[ctools][] = views:views_default:3.0
+features[features_api][] = api:2
+features[views_view][] = blog_bookmark_button
+features_exclude[dependencies][ctools] = ctools

@@ -1,0 +1,34 @@
+{ "rules_adjust_1st_renewal_w_c" : {
+    "LABEL" : "Adjust 1st Renewal With Any Coupons From The Free Trial",
+    "PLUGIN" : "reaction rule",
+    "OWNER" : "rules",
+    "REQUIRES" : [
+      "dl_billing_management",
+      "commerce_cart",
+      "commerce_line_item",
+      "commerce_product_reference"
+    ],
+    "ON" : { "commerce_product_calculate_sell_price" : [] },
+    "IF" : [
+      { "dl_billing_management_does_order_get_coupon_from_free_trail" : { "entity" : [ "commerce-line-item:order" ] } },
+      { "NOT commerce_order_is_cart" : { "commerce_order" : [ "commerce-line-item:order" ] } }
+    ],
+    "DO" : [
+      { "dl_billing_management_get_discount_from_free_trial" : {
+          "USING" : {
+            "order" : [ "commerce-line-item:order" ],
+            "lineItem" : [ "commerce-line-item" ]
+          },
+          "PROVIDE" : { "discount_amount" : { "discount_amount" : "Discount Amount" } }
+        }
+      },
+      { "commerce_line_item_unit_price_subtract" : {
+          "commerce_line_item" : [ "commerce_line_item" ],
+          "amount" : [ "discount-amount" ],
+          "component_name" : "discount",
+          "round_mode" : "1"
+        }
+      }
+    ]
+  }
+}

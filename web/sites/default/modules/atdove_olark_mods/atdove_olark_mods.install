@@ -1,0 +1,17 @@
+<?php
+
+/**
+ * @file
+ * Provides uninstall cleanup of variables defined by this module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function atdove_olark_mods_uninstall() {
+  /* Make the mods module heavier than the original module to override original settings */
+  db_update('system')
+    ->fields(array('weight' => 15))
+    ->condition('name', 'atdove_olark_mods', '=')
+    ->execute();
+}

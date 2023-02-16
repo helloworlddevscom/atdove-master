@@ -1,0 +1,9 @@
+<?php
+
+function atdove_rules_rules_action_info_alter(&$actions) {
+    $actions['commerce_cart_add_to_cart_message']['callbacks']['execute'] = 'atdove_rules_custom_cart_callback';
+}
+
+function atdove_rules_custom_cart_callback($product) {
+    drupal_set_message(t('%title added to <a href="!cart-url">future billing</a>.', array('%title' => $product->title, '!cart-url' => url('cart'))));
+}

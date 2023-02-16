@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Help Topic feature.
+ */
+
+include_once 'helptopic_content_type.features.inc';

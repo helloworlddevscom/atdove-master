@@ -1,0 +1,10 @@
+name = Commerce (More Rules)
+description = This enables Commerce Rules Extra and rules that use it. 
+core = 7.x
+package = Features
+dependencies[] = commerce_cart
+dependencies[] = commerce_rules_extra
+dependencies[] = entity
+dependencies[] = rules
+features[features_api][] = api:2
+features[rules_config][] = commerce_for_dl_new_user_checkout_only_checkout_page_

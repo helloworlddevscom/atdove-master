@@ -1,0 +1,187 @@
+<?php
+
+/**
+ * @file dl_openid.module
+ * Customizations to the open id implementation
+ */
+
+function dl_openid_openid_connect_post_authorize($tokens, $account, $userinfo, $client_name, $is_new) {
+  //confirm this user is associated with the domain their open id authorization came from.
+  $gid_fromOpenId = dl_openid_gidFromOpenID($client_name);
+  $gid_fromUser = organization_control_orgID();
+  if($gid_fromOpenId != $gid_fromUser){
+    atdove_user_invitations_invite(array($account->mail), 0,false);
+  }
+}
+
+function dl_openid_gidFromOpenID($openid_connect_client_id){
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', 'organization')
+    ->propertyCondition('status', NODE_PUBLISHED)
+    ->fieldCondition('field_openid_client_id', 'value',$openid_connect_client_id, '=');
+  $result = $query->execute();
+  if (isset($result['node'])) {
+    $news_items_nids = array_keys($result['node']);
+    foreach($result['node'] as $org_id => $org){
+      //there will only be one.
+      return $org_id;
+    }
+  }
+  else {
+    return 0;
+  }
+}
+
+/*
+ * IF an open ID user cannot be matched by their open id, lets see if they may have existed in the system before.
+ * Look for users by:
+ *   EmployeeID
+ *   Email (Currently not supported, See notes below).
+*/
+function dl_openid_unaffilated_user_load($userinfo) {
+
+  $orgID = dl_openid_gidFromOpenID($userinfo['eduPersonScopedAffiliation']);
+  if($orgID==false) {
+    return false;
+  }
+
+  //Look for a user by employeeID (they would be previously unmatched to this openID auth)
+  $account = atdove_user_invitations_user_load_by_employeeID($userinfo['employeeID'],$orgID);
+  if($account) {
+    return $account;
+  }
+
+  // According to recommedations from Open Athens we really should not match authentication on email.
+  //before OpenAthens all Blue Pearl users should have n associated EmployeeID so matching on that should be good.
+  //post OpenAthens all Blue Pearl users will be matched by the open ID authmap.
+  if(filter_var($userinfo['email'], FILTER_VALIDATE_EMAIL)) {
+    if (user_load_by_mail($userinfo['email'])) {
+//      drupal_set_message(t('The e-mail address %email is already taken.', array('%email' => $userinfo['email'])), 'error');
+    }
+  }
+
+  return false;
+
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function dl_openid_form_alter(&$form,&$form_state,$form_id) {
+  if ($form_id == 'user_login') {
+    // If the submitted username/email matches an account that uses SSO,
+    // force them to use SSO.
+    // That is how we manage member subscriptions.
+    array_unshift($form['#validate'], 'dl_openid_login_validate');
+  }
+  else if ($form_id == "openid_connect_login_form") {
+    if (isset($form['openid_connect_client_openathens_login'])) {
+      $form['openid_connect_client_openathens_login']['#value'] = "BluePearl Login";
+    }
+  }
+}
+
+/**
+ * If the submitted username/email matches an account that uses SSO,
+ * force them to use SSO.
+ * That is how we manage member subscriptions.
+ */
+function dl_openid_login_validate($form, &$form_state) {
+
+  //look up this user
+  $attempted_auth_value = $form_state['values']['name'];
+  $account = false;
+  //by email
+  $account = user_load_by_mail($attempted_auth_value);
+  if(!$account) {
+    $account = user_load_by_name($attempted_auth_value);
+  }
+
+  if($account) {
+    //if this is a blue pearl user they must use Open Athens SSO as this is how their member's subscriptions are handled.
+    $orgID = organization_control_orgID($account);
+
+    if ($orgID == 17772) {
+      //Mimic function openid_connect_login_form_submit(&$form, &$form_state)
+      //$client_name is hard coded to Open Athens. Future, other IDPs will need to be added. This should be added to the organization node.
+      $client_name = "openathens";
+
+      openid_connect_save_destination();
+      $client = openid_connect_get_client($client_name);
+      $scopes = openid_connect_get_scopes();
+      $_SESSION['openid_connect_op'] = 'login';
+      $client->authorize($scopes);
+
+      drupal_set_message("You were logged in via BluePearl's OpenAthens Federation.");
+
+    }
+  }
+}
+
+/**
+ * Implements hook_menu_site_status_alter().
+ *
+ * Redirect anonymous users from /user to /user/login.
+ * This is because for whatever reason /user does not display the
+ * login form with the BluePearl Login button.
+ */
+function dl_openid_menu_site_status_alter(&$menu_site_status, $path) {
+  if (user_is_anonymous()) {
+    if ($path == 'user') {
+      drupal_goto('user/login');
+    }
+  }
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function dl_openid_block_info() {
+  $blocks['atdove_custom_login_form'] = array(
+    'info' => t('Custom login form for AtDove'),
+    'cache' => DRUPAL_NO_CACHE
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function dl_openid_block_view($delta = '') {
+  // The $delta parameter tells us which block is being requested.
+  global $user;
+  $block = array();
+  switch ($delta) {
+    case 'atdove_custom_login_form':
+      $block['subject'] = t('Scrub In');
+
+      // Setup vars to pass to template.
+      $variables = [
+      ];
+
+      // We have to set some content here or the block won't be rendered,
+      // even though our actual content comes from the template.
+      $block['content'] = 'scrub in';
+
+//      $block['content'] = theme('atdove_custom_login_form', $variables);
+      break;
+  }
+  return $block;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function dl_openid_theme($existing, $type, $theme, $path) {
+  return array(
+    'block__dl_openid__atdove_custom_login_form' => array(
+      'variables' => [
+        'block' => [],
+      ],
+      'base hook' => 'block',
+      'template' => 'block--atdove-custom-login-form',
+      'path' => $path . '/templates/blocks',
+    ),
+  );
+}

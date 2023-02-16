@@ -1,0 +1,6 @@
+name = Atdove User Invitations
+description = "Allows admins to invite users (existing or new) to join by submitting delimited list of emails."
+core = 7.x
+project = "atdove_user_invitations"
+dependencies[] = og
+dependencies[] = organization_control

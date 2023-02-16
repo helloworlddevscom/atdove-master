@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Billing Dashboard Views feature.
+ */
+
+include_once 'billing_dashboard_views.features.inc';

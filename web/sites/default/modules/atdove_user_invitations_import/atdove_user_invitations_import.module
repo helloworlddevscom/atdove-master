@@ -1,0 +1,339 @@
+<?php
+
+
+/**
+ * Implements hook_menu().
+ */
+function atdove_user_invitations_import_menu() {
+  $items['invite-users/import'] = array(
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('atdove_user_invitations_import_form'),
+    'title' => 'Invite Users Import',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+  );
+  return $items;
+}
+
+function atdove_user_invitations_import_form($form, &$form_state) {
+  $form['header'] = array(
+    '#type' => 'markup',
+    '#markup' => "<h1>Import Invites</h1>",
+  );
+  if (!empty($form_state['values']['output'])) {
+    $form['output'] = array(
+      '#type' => 'markup',
+      '#markup' => $form_state['values']['output'],
+    );
+  }
+  $form['source'] = array(
+    '#type' => 'select',
+    '#title' => t('Pick your source.'),
+    '#options' => array(
+      'DL-Pending-Invites-TEST.csv'=>'Test Souce',
+#      'DL-Pending-Invites-ErrorsRemoved.csv'=>'Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-01.csv'=>'01 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-02.csv'=>'02 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-03.csv'=>'03 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-04.csv'=>'04 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-05.csv'=>'05 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-06.csv'=>'06 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-07.csv'=>'07 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-08.csv'=>'08 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-09.csv'=>'09 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-10.csv'=>'10 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-11.csv'=>'11 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-12.csv'=>'12 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-13.csv'=>'13 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-14.csv'=>'14 Jan 15 CSV from Avi - Errors Removed',
+      'DL-Pending-Invites-ErrorsRemoved-15.csv'=>'15 Jan 15 CSV from Avi - Errors Removed',
+ #     'DL-Pending-Invites.csv'=>'Jan 15 CSV from Avi - Full CSV - May have performance issues'
+      ),
+    '#default' => array('DL-CurrentSubscriptionInfo-TEST.csv'=>'Test Souce'),
+    '#required' => TRUE,
+  );
+  $form['action'] = array(
+    '#type' => 'select',
+    '#title' => t('Test Only or Run the Import'),
+    '#options' => array(
+#      'test'=>'Test',
+#      'run'=>'Run',
+      'batch'=>'Run as Batch'
+     ),
+    '#default' => array('test'=>'Test'),
+    '#required' => TRUE,
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Import Invites!'),
+  );
+  return $form;
+}
+
+// function atdove_user_invitations_import_form_submit($form, &$form_state) {
+//   $report = array();
+//   $notices = array();
+//   $operations = array();
+//   $source = $form_state['values']['source'];
+//   $action = $form_state['values']['action'];
+//   //parser
+//   //get the csv. 
+//   $path = dirname(__FILE__)."/files/".$source;
+//   $fp = fopen($path,'r');
+//   //go through the submitted data
+//   $linecount = 1;
+//   //Foreach Row  
+//   while(($entry = fgetcsv($fp,0,',','"')) !== FALSE) {
+//     $error = false;
+//     //skip if deleted
+//     if($linecount==1){
+//       $report[] = $linecount."|error|headers||The last modified data was ".$entry[4]." which is older than the cutoff of Oct 1st 2015.";
+//       $error = true;
+//     }
+//     elseif(strtotime($entry[4])<1443657600){
+//       $report[] = $linecount."|error|too old|".$entry[10]."|The last modified data was ".$entry[4]." which is older than the cutoff of Oct 1st 2015.";
+//       $error = true;
+//     }
+//     else{
+//       //find the invitor's org.
+//       $orgUUID = dl_customizations_swt_hash_to_uuid($entry['10']); 
+//       $orgQuery = db_select('node','n');
+//       $orgQuery->condition('n.uuid',"$orgUUID");
+//       $orgQuery->fields('n',array('nid'));
+//       $orgResults = $orgQuery->execute();
+//       $orgR = $orgResults->fetchAssoc();
+//       $orgID = $orgR['nid'];
+//       if(!isset($orgID) || $orgID=="" || $orgID==0){
+//         $report[] = $linecount."|error|org not found|".$entry[10]."|The organization,".$entry[10].", was not found.";
+//         $error = true;
+//       }
+//       //evaluate the submitted invitee
+//       $email = $entry[8];
+//       //if email is INVALID
+//       if (!(valid_email_address($email))) {
+//         $report[] = $linecount."|error|email invalid|".$entry[10]."|The email, ".$email.", was an invalid format.";
+//         $error = true;
+//       }
+//       //Do they exist.
+//       if(organization_control_mail_check_exists($email)){
+//         $acct = user_load_by_mail($email);
+//         $acctID = $acct->uid;
+//         $new = 0;
+//         //if they are already a member, skip
+//         if(organization_control_orgID($acct) == $orgID){
+//           $report[] = $linecount."|error|already a member|".$entry[10]."|The user was already a member of ".$entry[10];
+//           $error = true;
+//         }else{
+//           $notices[] = $linecount."|notice|email already exists|".$entry[10]."|The email, ".$email.", already exists. Transfer initiated.";
+//         }
+//       }
+//       else{
+//         //We will be creating this user. 
+//         $new = 1; 
+//       }
+//       if($error != true){
+//         //create the new user if need be. 
+// 
+//         if($new == 1){
+//           if($action != 'test'){
+//             $acctID = null;
+//           }
+// //for testing only
+// else{
+//   $acctID = user_load(30);
+// }
+//         }
+//         $data = array(
+//           'acctID' => $acctID,
+//           'orgID' => $orgID,
+//           'email' => $email,
+//           'initiator' => 1,
+//           'new' => $new,
+//         );
+//         if($action == 'batch'){
+//           $operations[] = atdove_user_invitations_add_to_db_import($data);
+//         }
+//         elseif($action == 'run'){
+//           atdove_user_invitations_add_to_db_import($data);
+//         }
+//         $report[] = $linecount."|success||".$entry[10]."|The email, ".$email.", was a invited.";
+// 
+//       } //end if no final error
+//     }//end if recent
+//     $linecount++;
+//   }//end for each row.
+//   if($action == 'batch'){
+//     $batch = array(
+//       'title' => t('Importing Invite Information'),
+//       'operations' => $operations,
+//       'finished' => 'dl_user_invitations_import_batch_finish',
+//       'init_message' => t('Importing...'),
+//       'progress_message' => t('Importing @current out of @total.'),
+//       'error_message' => t('Invite Import could not be made.'),
+//     );  
+//     batch_set($batch);
+//     batch_process('invite-users/import');
+//   }
+//   elseif($action == 'test' || $action == 'run'){
+//     $output = "<h3>Report</h3>";
+//     foreach($report as $r){
+//       $output .= $r."<br/>";
+//     }
+//     $output .= "<h3>Notices</h3>";
+//     foreach($notices as $n){
+//       $output .= $n."<br/>";
+//     }
+//     $form_state['values']['output'] = $output;
+//     $form_state['rebuild'] = TRUE;
+//   }
+// }
+// 
+// function dl_user_invitations_import_batch_finish(){
+//   drupal_set_message("Batch is finished");
+// }
+// 
+// function atdove_user_invitations_add_to_db_import($data){
+//   //see if we need to create the user
+//   if($data['new']==1){
+//     $acct = create_new_user_during_import($data['email'],$data['orgID']);
+//     $data['acctID'] = $acct->uid;
+//   }
+//   atdove_user_invitations_add_to_db($data['acctID'],$data['orgID'],$data['email'],$data['initiator'],$data['new']);
+// }
+
+function atdove_user_invitations_import_form_submit($form, &$form_state) {
+  $report = array();
+  $notices = array();
+  $operations = array();
+  $source = $form_state['values']['source'];
+  $action = $form_state['values']['action'];
+  //parser
+  //get the csv. 
+  $path = dirname(__FILE__)."/files/".$source;
+  $fp = fopen($path,'r');
+  //go through the submitted data
+  $linecount = 1;
+  //Foreach Row  
+  while(($entry = fgetcsv($fp,0,',','"')) !== FALSE) {
+    $error = false;
+    //skip if deleted
+    if($linecount==1){
+      $error = true;
+    }
+    elseif(strtotime($entry[4])<1443657600){
+      $error = true;
+    }
+    if($error!=true){
+      $operations[] = atdove_user_invitations_add_to_db_import($entry);
+    } //end if no final error
+    $linecount++;
+  }//end for each row.
+  if(count($operations)>0){
+    $batch = array(
+      'title' => t('Importing Invite Information'),
+      'operations' => $operations,
+      'finished' => 'dl_user_invitations_import_batch_finish',
+      'init_message' => t('Importing...'),
+      'progress_message' => t('Importing @current out of @total.'),
+      'error_message' => t('Invite Import could not be made.'),
+    );  
+   batch_set($batch);
+//   batch_process('invite-users/import');
+  }else{
+    drupal_set_message('No Rows Found (Header Row is ignored)','error');
+  }
+}
+
+function dl_user_invitations_import_batch_finish(){
+  drupal_set_message("Batch is finished");
+}
+
+function atdove_user_invitations_add_to_db_import($entry){
+  $error = false;
+  //find the invitor's org.
+  $orgUUID = dl_customizations_swt_hash_to_uuid($entry['10']); 
+  $orgQuery = db_select('node','n');
+  $orgQuery->condition('n.uuid',"$orgUUID");
+  $orgQuery->fields('n',array('nid'));
+  $orgResults = $orgQuery->execute();
+  $orgR = $orgResults->fetchAssoc();
+  $orgID = $orgR['nid'];
+
+  if(!isset($orgID) || $orgID=="" || $orgID==0){
+    $error = true;
+  }
+  //evaluate the submitted invitee
+  $email = $entry[8];
+  //if email is INVALID
+  if (!(valid_email_address($email))) {
+    $error = true;
+  }
+  //Do they exist.
+  if(organization_control_mail_check_exists($email)){
+    $acct = user_load_by_mail($email);
+    $acctID = $acct->uid;
+    $new = 0;
+    //if they are already a member, skip
+    if(organization_control_orgID($acct) == $orgID){
+      $error = true;
+    }
+  }
+  else{
+    //We will be creating this user. 
+    $new = 1; 
+    $acct = create_new_user_during_import($email,$orgID);
+    $acctID = $acct->uid;
+  }
+  if($error != true){
+    //create the new user if need be. 
+    $data = array(
+      'acctID' => $acctID,
+      'orgID' => $orgID,
+      'email' => $email,
+      'initiator' => 1,
+      'new' => $new,
+    );
+    atdove_user_invitations_add_to_db($data['acctID'],$data['orgID'],$data['email'],$data['initiator'],$data['new']);
+  }
+}
+
+
+
+
+
+
+
+
+
+
+//just like create_new_user() function but doesn't send the welcome email again. 
+function create_new_user_during_import($email,$gid) {
+//This will generate a random password, you could set your own here
+  $password = user_password(8);
+
+  //set up the user fields
+  $fields = array(
+    'name' => $email,
+    'mail' => $email,
+    'pass' => $password,
+    'status' => 1,
+    'init' => 'email address',
+    'roles' => array(
+      DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+    ),
+  );
+
+  //the first parameter is left blank so a new user is created
+  $account = user_save('', $fields);
+  // If you want to send the welcome email, use the following code
+
+  // Manually set the password so it appears in the e-mail.
+  $account->password = $fields['pass'];
+
+  // Assign the "subscriber" role
+  $role = user_role_load_by_name("subscriber");
+  user_multiple_role_edit(array($account->uid), 'add_role', $role->rid);
+
+  return $account;
+}
+

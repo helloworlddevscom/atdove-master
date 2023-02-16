@@ -1,0 +1,200 @@
+<?php
+
+/**
+ * @file
+ * dl_billing_management.install
+ *
+ * Install, uninstall and update hooks for the DL Billing Management module.
+ */
+
+/**
+ * Implements hook_schema().
+ *
+ * @return array
+ */
+function dl_billing_management_schema() {
+  $schemas = array();
+
+/*
+* A Table to track impersonating users
+*/
+  $schemas['dl_impersonate'] = array(
+    'description' => 'Each impersonating user has their session recorded into the dl_impersonate table. Each record represents an impersonating user.',
+    'fields' => array(
+      'sid' => array(
+        'description' => 'The current session for this impersonating user corresponding to their {sessions}.sid.',
+        'type' => 'varchar',
+        'length' => '64',
+        'not null' => TRUE,
+        'default' => ''),
+      'uid_from' => array(
+        'description' => 'The {users}.uid corresponding to a session.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'disp-width' => '10'),
+      'uid_as' => array(
+        'description' => 'The {users}.uid this session is impersonating as.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'disp-width' => '10'),
+    ),
+    'indexes' => array(
+      'sid' => array('sid', 'uid_from'),
+      'sid_2' => array('sid', 'uid_as'),
+    ),
+  );
+
+  $schemas['dl_impersonate_log'] = array(
+    'description' => 'Table that contains logs of impersonate events.',
+    'fields' => array(
+      'lid' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique impersonate log event ID.',
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'not null' => FALSE,
+        'default' => null,
+        'description' => 'The {users}.uid of the user who triggered the event.',
+      ),
+      'iid' => array(
+        'type' => 'int',
+        'not null' => FALSE,
+        'default' => null,
+        'description' => 'The {users}.uid of the user who they impersonated as.',
+      ),
+      'message' => array(
+        'type' => 'text',
+        'not null' => FALSE,
+        'size' => 'big',
+        'description' => 'Text of log message to be passed into the t() function.',
+      ),
+      'location'  => array(
+        'type' => 'text',
+        'not null' => TRUE,
+        'description' => 'URL of the origin of the event.',
+      ),
+      'referer' => array(
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'URL of referring page.',
+      ),
+      'hostname' => array(
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'Hostname of the user who triggered the event.',
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Unix timestamp of when event occurred.',
+      ),
+    ),
+    'primary key' => array('lid'),
+  );
+
+  return $schemas;
+}
+
+/**
+ * Implements hook_install().
+ */
+function dl_billing_management_install() {
+  db_update('system')
+    ->fields(array('weight' => -9))
+    ->condition('name', 'dl_billing_management')
+    ->execute();
+}
+
+/**
+ * Reformat variable value.
+ */
+function dl_billing_management_update_7001() {
+  variable_set('dl_billing_management_ubid', 0);
+}
+
+/**
+ * We decided not to use the variable table since is stores data in serialize format which prevents mysql from operating on it.
+ * We will create our own db table instead.
+ */
+function dl_billing_management_update_7002() {
+  variable_del('dl_billing_management_ubid');
+
+  $schemas['dl_billing_ubid'] = array(
+    'description' => 'An order will be tied to a billing user. This user will not have a real name or email. This table tracks a Unique ID to use in new accounts',
+    'fields' => array(
+      'ubid' => array(
+        'description' => 'The last used unique id for billing.',
+        'type' => 'serial',
+        'size' => 'normal',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'mail' => array(
+        'type' => 'varchar',
+        'length' => 254,
+        'not null' => FALSE,
+        'default' => '',
+        'description' => "Creator's e-mail address.",
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Unix timestamp of when event occurred.',
+      ),
+    ),
+    'primary key' => array('ubid'),
+  );
+  db_create_table('dl_billing_ubid', $schemas['dl_billing_ubid']);
+
+}
+
+/**
+ * add a new variable.
+ */
+function dl_billing_management_update_7003() {
+  //initial variable is 5 days grace period.
+  variable_set('dl_billing_grace_period', 432000);
+  //initial variable is that this cron has never run.
+  variable_set('cron_licenses_expire_lastrun', 0);
+
+}
+
+/**
+ * Fix for duplicate billing users for Vanier College organization error.
+ * See: https://helloworlddevs.atlassian.net/browse/DAOM-39
+ */
+function dl_billing_management_update_7004() {
+  // Remove billing_only role from oldest of the two users
+  // associated with this organization that have this role.
+  db_delete('users_roles')
+    ->condition('uid', 59911)
+    ->condition('rid', 10)
+    ->execute();
+
+  // See @TODOs in dl_billing_management.module for some thoughts on how
+  // we might prevent this issue in the future.
+}
+
+/**
+ * Fix for duplicate billing users for Front Range Community College organization error.
+ * See: https://helloworlddevs.atlassian.net/browse/DAOM-43
+ */
+function dl_billing_management_update_7005() {
+  // Remove billing_only role from oldest of the two users
+  // associated with this organization that have this role.
+  db_delete('users_roles')
+    ->condition('uid', 60396)
+    ->condition('rid', 10)
+    ->execute();
+
+  // See @TODOs in dl_billing_management.module for some thoughts on how
+  // we might prevent this issue in the future.
+}

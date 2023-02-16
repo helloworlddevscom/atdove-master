@@ -1,0 +1,121 @@
+<?php
+
+/**
+ * Implement hook_form_user_profile_form_alter().
+ *
+ */
+function atdove_user_profile_form_user_profile_form_alter(&$form, &$form_state) {
+  global $user;
+  if (!in_array('administrator', array_values($user->roles))) {
+    $form['field_age_range']['#access'] = false;
+    $form['field_gender']['#access'] = false;
+    $form['field_createdby']['#access'] = false;
+    $form['field_creator']['#access'] = false;
+    $form['field_website']['#access'] = false;
+    $form['field_school']['#access'] = false;
+    $form['field_pratice_start_year']['#access'] = false;
+    $form['field_graduation_date']['#access'] = false;
+    $form['field_employee_id']['#access'] = false;
+    hide($form['account']['name']);
+    atdove_user_profile_field_group_hide_field_groups($form, array('group_blogger_information'));
+    atdove_user_profile_field_group_hide_field_groups($form, array('group_consultant_information'));
+    atdove_user_profile_field_group_hide_field_groups($form, array('group_address_information'));
+    $form['field_age_range']['#access'] = false;
+    $form['actions']['cancel']['#access'] = false;
+  }
+  if (!(in_array('administrator', array_values($user->roles)) || in_array('Billing Admin', array_values($user->roles)))) {
+    $form['og_user_node']['#access'] = false;
+    $form['og_user_node1']['#access'] = false;
+    atdove_user_profile_field_group_hide_field_groups($form, array('group_organization_information'));
+  }
+
+  // require first and last name when editing own profile
+  if ($form['#user']->uid == $user->uid) {
+    $form['field_first_name']['und'][0]['value']['#required'] = TRUE;
+    $form['field_last_name']['und'][0]['value']['#required'] = TRUE;
+  }
+}
+
+/**
+ * Hides field groups including children in a form.
+ *
+ * @param array $form
+ *   A form array.
+ * @param array $group_names
+ *   An array of field group names that should be hidden.
+ */
+function atdove_user_profile_field_group_hide_field_groups(&$form, $group_names) {
+  foreach ($group_names as $group_name) {
+    if (isset($form['#fieldgroups'][$group_name]) && isset($form['#group_children'])) {
+      // Hide the field group.
+      $form['#fieldgroups'][$group_name]->format_type = 'hidden';
+      // Hide the elements inside the field group.
+      foreach (array_keys($form['#group_children'], $group_name) as $field_name) {
+        $form[$field_name]['#access'] = FALSE;
+      }
+    }
+  }
+}
+
+function atdove_user_profile_menu() {
+  $items = array();
+  $items['atdove/name/autocomplete'] = array(
+  'title' => 'name autocomplete',
+  'page callback' => 'atdove_user_profile_name_autocomplete',
+  'access callback' => 'user_access',
+  'access arguments' => array('access content'),
+  'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function atdove_user_profile_name_autocomplete($string = '') {
+  $matches = array();
+
+  // this query is REALLY close to working, but it is not quite right.
+  // I'm commenting it out to disable autocommplete on this field for now.
+
+  // if ($string) {
+  //   global $user;
+  //   $account = user_load($user->uid);
+  //
+  //   // Load all groups the user belongs to
+  //   $gids = og_get_groups_by_user($account);
+  //   $groups = array_keys($gids['node']);
+  //
+  //   $peers = array(0);
+  //
+  //   if ($groups != NULL) {
+  //     // Get all users within the user's groups
+  //     $peers = db_select('og_membership', 'ogm');
+  //     $peers->fields('ogm', array('etid'));
+  //     $peers->condition('ogm.entity_type', 'user')
+  //       ->condition('ogm.gid', $groups, 'IN')
+  //       ->distinct();
+  //   }
+  //
+  //   // Only include these as the possible members
+  //   $query = db_select('users', 'u');
+  //   $query->condition('u.uid', $peers, 'IN')
+  //     ->fields('u', array('uid', 'name'))
+  //     ->execute();
+  //   foreach ($query as $peer) {
+  //     $matches[$peer->name] = check_plain($peer->name);
+  //   }
+  // }
+
+  drupal_json_output($matches);
+}
+
+function atdove_user_profile_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'views_exposed_form' && ($form['#id'] == 'views-exposed-form-group-members-administration-page-1' || $form['#id'] == 'views-exposed-form-assignments-admin-page' || strpos($form['#id'], 'views-exposed-form-my-community') !== false)) {
+    $form['uid']['#autocomplete_path'] = 'atdove/name/autocomplete';
+  }
+}
+
+function atdove_user_profile_admin_paths_alter(&$paths) {
+    // Treat all user pages as not administrative.
+    $paths['user/*'] = FALSE;
+    // Treat all node pages as not administrative.
+    $paths['node/*'] = FALSE;
+}

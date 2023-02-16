@@ -1,0 +1,18 @@
+{ "rules_renewal_upcoming_email" : {
+    "LABEL" : "Renewal Upcoming Email",
+    "PLUGIN" : "reaction rule",
+    "ACTIVE" : false,
+    "OWNER" : "rules",
+    "TAGS" : [ "email" ],
+    "REQUIRES" : [ "dl_billing_management", "rules_onceperday" ],
+    "ON" : { "once_per_day" : [] },
+    "DO" : [
+      { "dl_billing_management_send_renewal_upcoming_emails" : {
+          "days" : "1",
+          "subject" : "This is a test of the Renewal Email Sends",
+          "message" : "You have an order about to renew"
+        }
+      }
+    ]
+  }
+}

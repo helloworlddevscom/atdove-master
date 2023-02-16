@@ -1,0 +1,21 @@
+{ "rules_free_trial_pricing" : {
+    "LABEL" : "Free Trial Pricing",
+    "PLUGIN" : "reaction rule",
+    "WEIGHT" : "8",
+    "OWNER" : "rules",
+    "REQUIRES" : [ "commerce_cart", "commerce_line_item", "commerce_product_reference" ],
+    "ON" : { "commerce_product_calculate_sell_price" : [] },
+    "IF" : [
+      { "commerce_order_is_cart" : { "commerce_order" : [ "commerce-line-item:order" ] } }
+    ],
+    "DO" : [
+      { "commerce_line_item_unit_price_amount" : {
+          "commerce_line_item" : [ "commerce_line_item" ],
+          "amount" : "0",
+          "component_name" : "base_price",
+          "round_mode" : "1"
+        }
+      }
+    ]
+  }
+}

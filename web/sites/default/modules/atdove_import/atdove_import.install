@@ -1,0 +1,39 @@
+<?php
+/**
+ * Using this for misc. updates.
+ */
+
+/**
+ * Enable searchindex_wipe module.
+ */
+function atdove_import_update_7001() {
+  module_enable(['searchindex_wipe']);
+}
+
+/**
+ * Enable node_revision_delete module.
+ */
+function atdove_import_update_7002() {
+  module_enable(['node_revision_delete']);
+}
+
+/**
+ * Enable atdove_contact module.
+ */
+function atdove_import_update_7003() {
+  module_enable(['atdove_contact']);
+}
+
+/**
+ * Disable Acquia modules.
+ */
+function atdove_import_update_7004() {
+  module_disable(['acquia_agent', 'acquia_spi', 'acquia_purge']);
+}
+
+/**
+ * Enable pantheon_advanced_page_cache and d8cache modules.
+ */
+function atdove_import_update_7005() {
+  module_enable(['pantheon_advanced_page_cache', 'd8cache']);
+}

@@ -1,0 +1,55 @@
+<?php
+
+/*
+* Module Info and Help
+*/
+function private_msg_customizations_info() {
+  return t('This module changes the private message module default message body field into a plain text field');
+}
+
+function private_msg_customizations_form_alter(&$form, &$form_state, $form_id) {
+  // prepopulate the to field if argument has a uid
+  if (arg(2) && in_array($form_id, array('privatemsg_new')) && arg(1) == 'new') {
+    $user = user_load(arg(2));
+    if ($user) {
+      if ($user->field_first_name['und'][0]['safe_value'] && $user->field_last_name['und'][0]['safe_value']) {
+       $form['recipient_title']['#markup'] = '<label>To ' . $user->field_first_name['und'][0]['safe_value'] . ' ' . $user->field_last_name['und'][0]['safe_value'] . '</label><br>';
+      }
+      $form['recipient']['#default_value'] = $user->name;
+      $form['recipient']['#disabled'] = TRUE;
+      $form['recipient']['#type'] = 'hidden';
+    }
+  }
+  if (in_array($form_id, array('privatemsg_new', 'privatemsg_form_reply'))) {
+    $form['body']['#format'] = 'plain_text';
+  }
+}
+
+/**
+ * Implements hook_query_privatemsg_autocomplete_alter().
+ *
+ * Makes sure that the messages/new to field autocompletes only with users that are part
+ * of the same organic group.
+ */
+function private_msg_customizations_query_privatemsg_autocomplete_alter(SelectQueryInterface $query) {
+  global $user;
+  $account = user_load($user->uid);
+
+  // Load all groups the user belongs to
+  $gids = og_get_groups_by_user($account);
+  $groups = array_keys($gids['node']);
+
+  $peers = array(0);
+
+  if ($groups != NULL) {
+    // Get all users within the user's groups
+    $peers = db_select('og_membership', 'ogm');
+    $peers->fields('ogm', array('etid'));
+    $peers->condition('ogm.entity_type', 'user')
+      ->condition('ogm.gid', $groups, 'IN')
+      ->distinct();
+  }
+
+  // Only include these as the possible recipients
+  $query->condition('u.uid', $peers, 'IN');
+}

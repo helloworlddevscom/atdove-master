@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Partner Page Content Type feature.
+ */
+
+include_once 'partner_page_content_type.features.inc';

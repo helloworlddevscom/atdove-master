@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Assignment Featurette feature.
+ */
+
+include_once 'assignment_featurette.features.inc';

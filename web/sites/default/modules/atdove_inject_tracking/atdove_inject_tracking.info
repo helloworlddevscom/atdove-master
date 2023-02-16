@@ -1,0 +1,4 @@
+name = atDove inject additional tracking codes into sales pages
+description = "Injects a google tag or pixel tracking code into pages."
+core = 7.x
+package = "atDove Customization"

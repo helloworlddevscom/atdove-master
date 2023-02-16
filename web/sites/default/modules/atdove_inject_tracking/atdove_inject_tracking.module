@@ -1,0 +1,66 @@
+<?php
+
+/**
+ * Implements hook_page_alter().
+ * Injects a tracking code based on page and, if it is a checkout, what product is in the cart
+ */
+function atdove_inject_tracking_page_alter(&$page) {
+    $path = current_path();
+
+    if(strpos($path, 'thankyou') !== false && strpos($path, 'checkout') !== false){
+        $page['page_top']['tracking_pixel'] = array(
+            '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:fr96vv5&fmt=3"/>'
+        );
+    }
+
+    elseif(strpos($path, 'checkout') !== false){    // If it is a checkout page let's find out what's in the cart
+        $order = commerce_cart_order_load($user->uid);
+        $lineitem = $order->commerce_line_items['und'][0]['line_item_id'];
+        $item = commerce_line_item_load($lineitem);
+
+        if ($item->line_item_label == 'Monthly-2017'){  // $49 Monthly Account 50 Member Account
+            $page['page_top']['tracking_pixel'] = array(
+                '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:29mr22u&fmt=3"/>'
+            );
+        }
+        elseif ($item->line_item_label == 'Annual-020-2017'){ // $399 Yearly 20 Member Account
+            $page['page_top']['tracking_pixel'] = array(
+                '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:dbluzvs&fmt=3"/>'
+            );
+        }
+        elseif ($item->line_item_label == 'Annual-050-2017'){ // $499 Yearly 50 Member Account
+            $page['page_top']['tracking_pixel'] = array(
+                '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:yhkrg72&fmt=3"/>'
+            );
+        }
+        elseif ($item->line_item_label == 'Annual-075-2017'){ // $749 Yearly 75 Member Account
+            $page['page_top']['tracking_pixel'] = array(
+                '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:qx6q8m4&fmt=3"/>'
+            );
+        }
+        elseif ($item->line_item_label == 'Annual-Z100-2017'){ // $998 Yearly 100 Member Account
+            $page['page_top']['tracking_pixel'] = array(
+                '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:7i4qaxk&fmt=3"/>'
+            );
+        }
+    }
+
+    elseif($path == 'node/1991296'){    // The /webform/special-accounts page
+        $page['page_top']['tracking_pixel'] = array(
+            '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:rbf0x4s&fmt=3"/>'
+        );
+    }
+
+    elseif($path == 'node/1'){          // The homepage
+        $page['page_top']['tracking_pixel'] = array(
+            '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:tjbo2vq&fmt=3"/>'
+        );
+    }
+
+    elseif($path == 'node/21101'){          // The /contact-us page
+        $page['page_top']['tracking_pixel'] = array(
+            '#markup' => '<img height="1" width="1" style="border-style:none;" alt="" src="https://insight.adsrvr.org/track/conv/?adv=cykgbbs&ct=0:ui3c1tm&fmt=3"/>'
+        );
+    }
+    
+}

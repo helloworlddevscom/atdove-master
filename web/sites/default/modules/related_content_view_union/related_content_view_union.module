@@ -1,0 +1,62 @@
+<?php
+
+/**
+ * We needed a related content view that shows related articles, blogs and videos. 
+ * These relationships were three seperate entity reference fields. 
+ * So we configured the view in Views UI to show related videos
+ * This module extends that view by doing the same query for blogs and articles and adding
+ * these additional queries as a union. 
+ */
+
+/**
+ * Implements hook_views_pre_execute()
+ */
+function related_content_view_union_views_pre_execute(&$view){
+
+    if($view->name == 'related_content_blog'){
+
+        //get the node that we are finding related content for
+        $mainNID = $view->args[0];
+
+        //create a new query for blogs
+        $query2 = db_select('field_data_field_related_blog', 'rb');
+        //this will be a union so fields need to use the same name as the view
+        $query2->addField('rb', 'field_related_blog_target_id', 'node_field_data_field_related_videos_nid');
+        $query2->join('node','n','rb.field_related_blog_target_id=n.nid and n.type=\'blog\' AND n.status=1 ');
+        $query2->addField('n', 'title', 'node_field_data_field_related_videos_title');
+        $query2->leftjoin('node_counter','t','t.nid=n.nid');
+        $query2->addField('t', 'totalcount', 'node_field_data_field_related_videos__node_counter_totalcoun');
+        $query2->leftjoin('node_comment_statistics','s','s.nid=n.nid');
+        $query2->addField('s', 'comment_count', 'node_field_data_field_related_videos__node_comment_statistic');
+        $query2->addExpression("'node'",'field_data_field_image_node_entity_type');
+        $query2->addField('n', 'type', 'node_field_data_field_related_videos_type');
+        $query2->condition('rb.entity_id', $mainNID, '=');
+
+        //create a new query for articles
+        $query3 = db_select('field_data_field_related_articles', 'ra');
+        //this will be a union so fields need to use the same name as the view
+        $query3->addField('ra', 'field_related_articles_target_id', 'node_field_data_field_related_videos_nid');
+        $query3->join('node','n','ra.field_related_articles_target_id=n.nid and n.type=\'article\' AND n.status=1 ');
+        $query3->addField('n', 'title', 'node_field_data_field_related_videos_title');
+        $query3->leftjoin('node_counter','t','t.nid=n.nid');
+        $query3->addField('t', 'totalcount', 'node_field_data_field_related_videos__node_counter_totalcoun');
+        $query3->leftjoin('node_comment_statistics','s','s.nid=n.nid');
+        $query3->addField('s', 'comment_count', 'node_field_data_field_related_videos__node_comment_statistic');
+        $query3->addExpression("'node'",'field_data_field_image_node_entity_type');
+        $query3->addField('n', 'type', 'node_field_data_field_related_videos_type');
+        $query3->condition('ra.entity_id', $mainNID, '=');
+
+        //union custom query with my_view default query
+        $query2->union($view->build_info['query'], 'UNION ALL');
+        $query3->union($query2, 'UNION ALL');
+        
+        //in order to prevent Cardinality violation errors i have to make a "total" query
+        $total_query = db_select($query3,'total')->fields('total');
+
+        //update views query and count_query with my new query.
+        $view->build_info['query'] = $total_query;
+        $view->build_info['count_query'] = $view->build_info['query']; //count_query is necessary for the pager
+
+    }
+
+}

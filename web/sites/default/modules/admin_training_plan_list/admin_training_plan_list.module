@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Admin Training Plans (list and bulk management) feature.
+ */
+
+include_once 'admin_training_plan_list.features.inc';

@@ -1,0 +1,55 @@
+<?php
+
+/**
+ * Implements hook_theme().
+ */
+function atdove_contact_theme($existing, $type, $theme, $path) {
+  return [
+    'block__atdove_contact__atdove_hubspot_contact' => [
+      'variables' => [],
+      'template' => 'block--atdove-contact--atdove-hubspot-contact',
+      'path' => $path . '/templates/blocks',
+    ],
+    'block__atdove_contact__atdove_hubspot_special_account' => [
+    'variables' => [],
+    'template' => 'block--atdove-contact--atdove-hubspot-special-account',
+    'path' => $path . '/templates/blocks'
+    ],
+  ];
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function atdove_contact_block_info() {
+  $blocks['atdove_hubspot_contact'] = [
+    'info' => t('AtDove HubSpot Contact/Support Form'),
+    'description'=> t('Displays HubSpot contact/support form.'),
+    'cache' => DRUPAL_NO_CACHE
+  ];
+  $blocks['atdove_hubspot_special_account'] = [
+    'info' => t('AtDove HubSpot Special Account Request Form'),
+    'description'=> t('Displays HubSpot special account request form.'),
+    'cache' => DRUPAL_NO_CACHE
+  ];
+
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function atdove_contact_block_view($delta = '') {
+  switch ($delta) {
+    case 'atdove_hubspot_contact':
+      $block['subject'] = t('Contact Us');
+      $block['content'] = t('Contact Us'); // content must have value for block to be rendered.
+      break;
+    case 'atdove_hubspot_special_account':
+      $block['subject'] = t('Special Accounts');
+      $block['content'] = t('Special Accounts'); // content must have value for block to be rendered.
+      break;
+  }
+
+  return $block;
+}

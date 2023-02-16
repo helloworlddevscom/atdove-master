@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Organization Member Profiles - Public feature.
+ */
+
+include_once 'organization_members_profiles.features.inc';

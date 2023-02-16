@@ -1,0 +1,1086 @@
+<?php
+
+/**
+ * @file dl_assignments.module
+ * This module provides functionality, hooks, security checks, and access control for atDove's assignments
+ */
+
+/**
+ * Implements hook_menu(). (Routing)
+ */
+function dl_assignments_menu() {
+  $items = array();
+//   $items['member/userlist'] = array(
+//     'title' => 'Assignment Userlist',
+//     'page callback' => 'dl_assignments_user_list',
+//     'access callback' => 'user_access',
+//     'access arguments' => array('access user profiles'),
+//     'type' => MENU_CALLBACK,
+//   );
+
+  $items['assignments/mymembers/autocomplete/%'] = array(
+    'title' => 'Managed Members Filtered by previously assigned content',
+    'page callback' => 'dl_assignments_managed_members_assignment_content',
+    'access callback' => 'user_access',
+    'access arguments' => array('access user profiles'),
+    'page arguments' => array(3),
+    'type' => MENU_CALLBACK,
+  );
+  $items['assignments/mymembers/autocomplete'] = array(
+    'title' => 'Managed Members',
+    'page callback' => 'dl_assignments_managed_members_assignment_content',
+    'access callback' => 'user_access',
+    'access arguments' => array('access user profiles'),
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/*
+ * provide a blocks
+ */
+function dl_assignments_block_info(){
+  $blocks = array();
+  $blocks['assign_to_person_modal'] = array(
+    'info' => t('Assign To Person Modal'),
+  );
+  $blocks['select-assignment-group'] = array(
+    'info' => t('Select Your Group - Assignments'),
+    'region' => 'content',
+    'status' => '1',
+    'visibility' => 'BLOCK_VISIBILITY_LISTED',
+    'pages' => "/my-organization/assignments/*\\rn/my-organization/assignments",
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  return $blocks;
+}
+
+/*
+ * provide block details
+ */
+
+function dl_assignments_block_view($delta = ''){
+  $block = array();
+  switch ($delta) {
+    case 'assign_to_person_modal':
+      $block['subject'] = '';
+      $block['content'] = dl_assignments_assign_to_person_modal_content();
+    break;
+    case 'select-assignment-group':
+      $block['subject'] = '';
+      $block['content'] = dl_assignments_group_admin_block_content();
+    break;
+
+  }
+  return $block;
+}
+
+/**
+ * A JSON object or array containing results for people
+ * Restricts suggestions to people in a group the current user is an admin of
+ * Disables those already assigned.
+ */
+function dl_assignments_managed_members_assignment_content($contentID = '',$format='json') {
+  //get all people this user managed.
+  $allpeople = group_people_autocomplete(null,'array');
+  $allUncompletedPeople = $allpeople;
+  $assignments = array();
+
+  //confirm they have not completed the content on their own.
+  //This is based on quiz_my_results() but modified to search for all people in one query
+  //and to get the quiz id associated with a contentid
+  $results = db_query('
+    SELECT
+      qnp.pass_rate,
+      qnrs.score,
+      qnrs.uid
+    FROM
+      {quiz_node_properties} qnp
+    INNER JOIN
+      {quiz_node_results} qnrs ON qnrs.vid = qnp.vid
+    INNER JOIN
+      {field_data_field_related_quiz} as q
+        ON
+      q.entity_id = :nid && q.field_related_quiz_target_id = qnrs.nid
+    WHERE
+      qnrs.uid IN (:uid)
+        AND
+      qnrs.is_evaluated = 1
+      	AND
+      qnrs.score > qnp.pass_rate
+    ORDER BY
+      qnrs.result_id DESC
+    ',
+    array(':uid' => array_keys($allUncompletedPeople), ':nid' => $contentID)
+  );
+  // Create an array out of the results.
+  while ($r = $results->fetchAssoc()) {
+    //track that this was assigned
+    $assignments[$r['uid']] = 1;
+    //remove it from this array so that the next query doesn't get duplicates.
+    unset($allUncompletedPeople[$r['uid']]);
+  }
+
+  //now look and see if they have any assignments for this contentID
+  //Need a loop, and eache person is a pid
+  // The previous query found all passes. this query looks for assigned and passed. It is redundent to look for passed people again. But since those users are removed, they won't be queried anyways. therefore I left it.
+  $query = db_select('field_data_field_assignee', 'a');
+  $query->condition('a.field_assignee_target_id', array_flip($allUncompletedPeople), 'IN');
+  $query->leftjoin('field_data_field_completed','ap','ap.entity_id=a.entity_id');
+  $query->join('field_data_field_assigned_content','ac','ac.field_assigned_content_target_id='.$contentID.' AND ac.entity_id=a.entity_id');
+  $query->leftjoin('node','n','n.nid = a.entity_id');
+  $query->condition('n.status', '1', '=');
+  $query->addField('n','status');
+  $query->addField('ap','field_completed_value','passed');
+  $query->addField('a','field_assignee_target_id','pid');
+  $results = $query->execute();
+  while($result = $results->fetchAssoc()){
+    $assignments[$result['pid']] = $result['passed']==null ? 0 : 1;
+    unset($allUncompletedPeople[$result['pid']]);
+  }
+
+  //reformat the allpeople array to have two layers and can store passed data
+  $matches = array();
+  foreach($allpeople as $pid => $p){
+    $matches[$pid]['name'] = $p;
+    if(isset($assignments[$pid])){
+      if($assignments[$pid]==1){
+        $matches[$pid]['msg'] = "Passed";
+      }else{
+        $matches[$pid]['msg'] = "Assigned";
+      }
+      $matches[$pid]['status'] = 0;
+    }
+    else{
+      $matches[$pid]['status'] = 1;
+      $matches[$pid]['msg'] = "";
+    }
+  }
+ if($format=='json'){
+    drupal_json_output($matches);
+  }
+  elseif($format=='array'){
+    return $matches;
+  }
+
+}
+
+/*
+* A function to check any users are already assigned a piece of content.
+* Useful to prevent duplicate assignments
+* Also prevents you from assigning to yourself.
+* Returns an assoc array with the key as the uid and the value is bool
+* Example: $return['uid'] = true/false;
+* Returns false on an error
+*/
+
+function dl_assignments_eligable_users_from_group($submittedGroups,$contentID){
+  $eligible_users = array();
+  $query = db_select('og_membership','om');
+  $query->condition('gid',$submittedGroups,'IN');
+  $query->addField('om','etid');
+  $results = $query->execute();
+
+  $prevAssigned = array();
+  while($result = $results->fetchAssoc()){
+    if(dl_assignments_is_assigned($result['etid'],$contentID)){
+      $prevAssigned[$result['etid']] = $result['etid'];
+    }
+    //for now, track all users. we will remove the prevAssigned array later
+    $eligible_users[$result['etid']] = $result['etid'];
+  }
+
+  foreach($prevAssigned as $p){
+    unset($eligible_users[$p]);
+  }
+
+  //if there are no eligible_users do not continue filtering them.
+  if(count($eligible_users) == 0){
+    return $eligible_users;
+  }
+
+  //confirm they have not completed the content on their own.
+  //This is based on quiz_my_results() but modified to search for all people in one query
+  //and to get the quiz id associated with a contentid
+  $results = db_query('
+    SELECT
+      qnp.pass_rate,
+      qnrs.score,
+      qnrs.uid
+    FROM
+      {quiz_node_properties} qnp
+    INNER JOIN
+      {quiz_node_results} qnrs ON qnrs.vid = qnp.vid
+    INNER JOIN
+      {field_data_field_related_quiz} as q
+        ON
+      q.entity_id = :nid && q.field_related_quiz_target_id = qnrs.nid
+    WHERE
+      qnrs.uid IN (:uid)
+        AND
+      qnrs.is_evaluated = 1
+      	AND
+      qnrs.score > qnp.pass_rate
+    ORDER BY
+      qnrs.result_id DESC
+    ',
+    array(':uid' => array_keys($eligible_users), ':nid' => $contentID)
+  );
+  // Create an array out of the results.
+  while ($r = $results->fetchAssoc()) {
+    //remove it from this array so that the next query doesn't get duplicates.
+    unset($eligible_users[$r['uid']]);
+  }
+
+  global $user;
+  $user_data = user_load($user->uid);
+
+  if(isset($user_data->og_user_node['und'][0]["target_id"])){
+    $bid = dl_billing_management_get_billing_user_by_gid($user_data->og_user_node['und'][0]["target_id"]);
+    if(isset($eligible_users[$bid])){
+      unset($eligible_users[$bid]);     //remove the billing user
+    }
+  }
+
+  if(isset($eligible_users[$user->uid])){
+    unset($eligible_users[$user->uid]); //remove yourself
+  }
+
+  return $eligible_users;
+}
+
+/*
+* A function to check a user is already assigned a piece of content.
+*
+*/
+function dl_assignments_is_assigned($uid,$contentID){
+  $query = db_select('field_data_field_assigned_content','ac');
+  $query->addField('ac','field_assigned_content_target_id');
+  $query->addField('ac','entity_id');
+  $query->join('node','assignment_node','assignment_node.nid = ac.entity_id');
+  $query->join('field_data_field_assignee','a','a.entity_id = ac.entity_id');
+  $query->condition('assignment_node.status', 1);
+  $query->condition('a.field_assignee_target_id', $uid);
+  $query->condition('ac.field_assigned_content_target_id', $contentID);
+
+  $results = $query->execute();
+  $result = $results->rowCount();
+  if($result == 0){
+    return False;
+  }
+  else {
+    return True;
+  }
+}
+
+/*
+ * provide a block content for changing the currently viewed group
+ */
+
+function dl_assignments_assign_to_person_modal_content(){
+  Global $user;
+
+  $output = array();
+
+  $output['markupHeader'] = array(
+    '#type' => 'markup',
+    '#markup' => '<div class="assign-to-person-modal"><h2>Content Assignment</h2><a class="close-person-modal-window" href="#">X</a><div class="modal-inner-wrapper">',
+    '#weight' => '10'
+  );
+
+  //if they are active and can make assignments
+  if(organization_control_user_has_role("Subscriber", $user)) {
+    $output['dl_assignments_assign_to_person_form'] = drupal_get_form('dl_assignments_assign_to_person_form');
+    $output['dl_assignments_assign_to_person_form']['#weight'] = '15';
+    $output['dl_assignments_assign_to_group_form'] = drupal_get_form('dl_assignments_assign_to_group_form');
+    $output['dl_assignments_assign_to_group_form']['#weight'] = '20';
+ }else{
+ //Otherwise, Hit them with marketing.
+  $output['premiumAssignMsg'] = array(
+    '#type' => 'markup',
+    '#markup' => '<p>You can assign procedural shorts, CE lectures, or medical articles to a single team member, group or multiple groups. But you’ll need to <a class="modal-sign-up-button" href="/future-billing">sign up for a free trial</a> to do that!</p>',
+    '#weight' => '20'
+  );
+
+ }
+  $output['markupFooter'] = array(
+    '#type' => 'markup',
+    '#markup' => '</div></div>',
+    '#weight' => '25'
+  );
+
+  return $output;
+
+}
+
+/*
+* Look up other users that the current user is allowed to make assignments too.
+*/
+// function dl_assignments_user_list(){
+//
+// }
+
+/*
+* This is the form to add an assignment to an individual.
+*/
+
+function dl_assignments_assign_to_person_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //Wrap this section in a div.
+
+  //We are going to try to only load options on an ajax request.
+  $people = array();
+  //$people = group_people_autocomplete('','array');
+
+  $form['people'] = array (
+    '#type' => 'select',
+    '#title' => t('Assign to Person(s)'),
+    '#options' => $people,
+    '#multiple' => TRUE,
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'data-placeholder' => 'Select People'
+    ),
+    '#weight' => 0
+  );
+  $form['apDetails']['apDuedate'] = array (
+    '#type' => 'date_popup',
+    '#title' => t('Due By [optional]'),
+    '#default_value' => '',
+    '#weight' => 15,
+    '#date_format' => 'Y-m-d',
+    '#date_label_position' => 'within',
+    '#date_year_range' => '0:+1'
+  );
+  $form['apDetails']['apInstructions'] = array (
+    '#type' => 'textfield',
+    '#title' => t('Instructions [optional]'),
+    '#weight' => 30,
+  );
+  $form['contentid'] = array (
+    '#type' => 'hidden',
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'id' => 'contentid'
+    )
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Assign'),
+    '#weight' => 35,
+  );
+
+  return $form;
+}
+
+/*
+* Validation for the form to add an assignment to an individual.
+*/
+function dl_assignments_assign_to_person_form_validate(&$form, &$form_state){
+  $submittedPeople = $form_state['values']['people'];
+  $contentID = $form_state['values']['contentid'];
+  //Does the current user have rights to assign to this person.
+  if(!dl_assignmnets_permssion_to_assign_to_people($submittedPeople)){
+    form_set_error('people','An illegal person option was detected. Contact administrator');
+  }
+  //is the contentID to published, assignable content
+  if(!dl_assignments_permission_to_assign_content($contentID)){
+    form_set_error('submit','An error occurred when creating the assignment. Try scrubbing out and back in. If you continue to receive this message please contact us. (1)');
+  }
+  //if the due date is set, confirm its in the future
+  if(isset($form_state['values']['apDuedate']) && $form_state['values']['apDuedate']!=""){
+    //the date value is not a standard format and can fail in strtotime. We could explode and build a date with mktime but just do this
+    $date = explode("-",$form_state['values']['apDuedate']);
+    $date = mktime(0,0,0,$date[1],$date[2],$date[0]);
+    if($date<time()){
+      form_set_error('apDuedate','The due date must be in the future.');
+    }
+  }
+}
+
+/*
+* Submit functionality for the form to add an assignment to an individual.
+*/
+function dl_assignments_assign_to_person_form_submit($form, &$form_state){
+  $contentID = $form_state['values']['contentid'];
+  $submittedPeople = $form_state['values']['people'];
+  $details['instructions'] = $form_state['values']['apInstructions'];
+  $details['duedate'] = $form_state['values']['apDuedate'];
+  dl_assignments_make_assignment_batch($submittedPeople,$contentID,$details);
+  return "";
+}
+
+/*
+* This function assigns content to an array of users using batch processing.
+* It does not validate or sanitize and assumes validation has been performed.
+*/
+function dl_assignments_make_assignment_batch($users,$contentID,$details = null){
+  //create an operation foreach person.
+  $operations = array();
+
+  foreach($users as $u){
+    // This function will contain code for node creation.
+    $operations[] = array('dl_assignments_make_assignment',array($u,$contentID,$details,true));
+  }
+  // Start Batch of node creation.
+  $batch = array(
+    'title' => t('Creating Assignments'),
+    'operations' => $operations,
+    'finished' => 'dl_assignments_make_assignment_batch_finish',
+    'init_message' => t('Assigning...'),
+    'progress_message' => t('Assigned @current out of @total.'),
+    'error_message' => t('Assignment could not be made.'),
+  );
+  // Set the batch operation.
+  batch_set($batch);
+}
+
+/*
+* The completion of the assignment batch
+*/
+function dl_assignments_make_assignment_batch_finish($success, $results, $operations){
+  drupal_set_message('Assignments made.');
+}
+
+/*
+* This function assigns content to a user
+* It does not validate or sanitize and assumes validation has been performed.
+*/
+function dl_assignments_make_assignment($uid, $contentID, $details = array('duedate'=>'','instructions'=>''), $send_email = true, &$context) {
+    if(!dl_assignments_user_has_assignment_or_completed($uid, $contentID)) {
+      global $user;
+      //lookup the content title and quiz
+      $queryContent = db_select('node','n');
+      $queryContent->addField('n','title');
+      $queryContent->condition('nid',$contentID);
+      $queryContent->join('field_data_field_related_quiz','q','q.entity_id = n.nid');
+      $queryContent->addField('q','field_related_quiz_target_id');
+      $queryContent->range(0,1); //there should only be one quiz per piece of content, but just in case...
+      $resultsContent = $queryContent->execute();
+      $resultContent = $resultsContent->fetchAssoc();
+      $contentTitle =$resultContent['title'];
+      $qnid =$resultContent['field_related_quiz_target_id'];
+      //lookup user name.
+      $queryUser = db_select('users','u');
+      $queryUser->addField('u','name');
+      $queryUser->condition('uid',$uid);
+      $resultsUser = $queryUser->execute();
+      $resultUser = $resultsUser->fetchAssoc();
+      $username = $resultUser['name'];
+      //create a new assignment.
+      //Create a new node
+      $node = new stdClass();
+      $node->title = "$contentTitle $username";
+      $node->type = 'assignment';
+      node_object_prepare($node);
+      $node->language = LANGUAGE_NONE;
+      $node->uid = $user->uid;
+      $node->status = 1;
+      $node->promote = 0;
+      $node->comment = 0;
+      //Instructions to the body
+      $node->body[$node->language][0]['format'] = 'filtered_html';
+      $node->body[$node->language][0]['summary'] = $details['instructions'];
+      $node->body[$node->language][0]['value'] = $details['instructions'];
+      //add the specifics
+      $node->field_assignee[$node->language][]['target_id'] = $uid;
+      $node->field_assignee[$node->language][]['target_type'] = "user";
+      if($details['duedate']!=''){
+        $node->field_due_date[$node->language][]['value'] = $details['duedate']." 00:00:00";
+      }
+
+      $node->field_assigned_content[$node->language][]['target_id'] = $contentID;
+      $node->field_assigned_content[$node->language][]['target_type'] = "node";
+      $node->field_organization[$node->language][]['target_id'] = organization_control_orgID($user);
+      $node->field_organization[$node->language][]['target_type'] = "node";
+
+      //its possible this user has already passed this quiz for this content on thier own (without it being assigned). If so, mark this assignment as complete.
+      $completedDate =  calculate_cert_date($uid,$qnid,"Y-m-d H:i:s");
+      if(!is_null($completedDate) && $completedDate) {
+        $node->field_completed['und'][0]['value'] = $completedDate;
+        $node->field_completed['und'][0]['timezone'] = date_default_timezone(FALSE);
+        $node->field_completed['und'][0]['timezone_db'] = 'UTC';
+        $node->field_completed['und'][0]['date_type'] = 'datetime';
+      }
+
+      //Save new node
+      $node = node_submit($node);
+      node_save($node);
+
+      // this array will be available to dl_trainingplans_make_assignment_batch_finish as $results['plans']
+      $context['results']['plans'][] = array('content' => $contentTitle, 'nid' => $contentID, 'uid' => $uid, 'instructions' => $details['instructions'], 'duedate' => $details['duedate']);
+      // email assignemnt notification to assignee
+      if ($send_email) {
+        $training_plans = '<a href="node/' . $contentID . '">' . $contentTitle . '</a><br>';
+        dl_assignments_email_notification($uid, $details['instructions'], $details['duedate'], 0, $training_plans);
+      }
+    }
+}
+
+/*
+* Email assignment notification to $uid
+*
+*/
+function dl_assignments_email_notification($uid, $instructions, $due_date, $count = 0, $training_plans = false) {
+  global $user;
+  global $base_url;
+  $due_date_usa = date("jS \of F, Y", strtotime($due_date));
+  $site_name = variable_get('site_name', 'Default');
+  $assignor = user_load($user->uid);
+
+  $to = '';
+  if (is_array($uid)) {
+    foreach ($uid as $u) {
+      $assignee = user_load($u);
+
+      $assignor_user_name = $assignor->name;
+      $assignor_first_name = $assignor->field_first_name['und'][0]['value'];
+      $assignor_last_name = $assignor->field_last_name['und'][0]['value'];
+      $assignee_email = $assignee->mail;
+
+      $to .= $to == '' ? $assignee_email : ', ' . $assignee_email;
+    }
+  }
+  else {
+    $assignee = user_load($uid);
+
+    $assignor_user_name = $assignor->name;
+    $assignor_first_name = $assignor->field_first_name['und'][0]['value'];
+    $assignor_last_name = $assignor->field_last_name['und'][0]['value'];
+
+    $assignee_email = $assignee->mail;
+
+    $to = $assignee_email; // to e-mail address
+  }
+
+  $from = 'messages@atdove.org'; // from e-mail address
+
+  $assignment_text = $count > 0 ? $count . ' new assignments' : 'a new assignment';
+  $subject = "You have $assignment_text on $site_name";
+  $body = "Hi Smarty,<br><br>Ready to get even smarter?<br>Scrub in $site_name to see what $assignor_first_name $assignor_last_name shared with you. Take the quiz when you’re done checking it out and to send $assignor_first_name $assignor_last_name a fancy certificate of completion to show how much you know.<br>";
+  if(isset($instructions) && $instructions!=""){
+    $body .= "<br> $assignor_first_name $assignor_last_name wants you to: $instructions<br>";
+  }
+  if ($training_plans) {
+    $assignment_text = $count > 0 ? 'These are the assignments' : 'This is the assignment';
+    $body .= "<br>$assignment_text: <br>";
+    $body .= $training_plans;
+  }
+  if(isset($due_date) && $due_date!=""){
+    $body .= "<br>You have until the $due_date_usa to do it!<br>";
+  }
+  $body .="<br>-Your Ally";
+  //params is the array passed to hook_mail function
+  $params = array(
+      'subject' => $subject,
+      'body' => $body,
+      );
+
+  drupal_mail('dl_assignments', 'assignment', $to, language_default(), $params, $from);
+
+}
+
+function dl_assignments_mail($key, &$message, $params) {
+  switch ($key) {
+    case 'assignment':
+      $message['subject'] = $params['subject'];
+      $message['body'] = $params['body'];
+    break;
+    }
+}
+
+/*
+* This is the form to add an assignment to a group.
+*/
+function dl_assignments_assign_to_group_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //We are going to try to only load options on an ajax request.
+  $groups = array();
+  // $groups = group_autocomplete('','array');
+  $form['groups'] = array (
+    '#type' => 'select',
+    '#title' => t('Assign to Group(s)'),
+    '#options' => $groups,
+    '#multiple' => TRUE,
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'data-placeholder' => 'Select Group'
+    ),
+    '#weight' => 0,
+  );
+  $form['agDetails']['agDuedate'] = array (
+    '#type' => 'date_popup',
+    '#title' => t('Due By [optional]'),
+    '#default_value' => '',
+    '#weight' => 15,
+    '#date_format' => 'Y-m-d',
+    '#date_label_position' => 'within',
+    '#date_year_range' => '0:+1'
+  );
+  $form['agDetails']['agInstructions'] = array (
+    '#type' => 'textfield',
+    '#title' => t('Instructions [optional]'),
+    '#weight' => 30,
+  );
+
+  $form['groupcontentid'] = array (
+    '#type' => 'hidden',
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'id' => 'groupcontentid'
+    )
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Assign'),
+    '#weight' => 35,
+  );
+  return $form;
+}
+
+/*
+* Validation the form to add an assignment to an group.
+*/
+function dl_assignments_assign_to_group_form_validate(&$form, &$form_state){
+  $submittedGroups = $form_state['values']['groups'];
+  $contentID = $form_state['values']['groupcontentid'];
+  //Does the current user have rights to assign to this person.
+  if(!dl_assignmnets_permssion_to_assign_to_groups($submittedGroups)){
+    form_set_error('groups','An illegal group option was detected. Contact administrator');
+  }
+  //is the contentID to published, assignable content
+  if(!dl_assignments_permission_to_assign_content($contentID)){
+    form_set_error('submit','An error occurred when creating the assignment. Try scrubbing out and back in. If you continue to receive this message please contact us. (2)');
+  }
+  //if the due date is set, confirm its in the future
+  if(isset($form_state['values']['agDuedate']) && $form_state['values']['agDuedate']!=""){
+    //the date value is not a standard format and can fail in strtotime. We could explode and build a date with mktime but just do this
+    $date = explode("-",$form_state['values']['agDuedate']);
+    $date = mktime(0,0,0,$date[1],$date[2],$date[0]);
+    if($date<time()){
+      form_set_error('agDuedate','The due date must be in the future.');
+    }
+  }
+
+}
+
+/*
+* Submit functionality for the form to add an assignment to an group.
+*/
+function dl_assignments_assign_to_group_form_submit($form, &$form_state){
+  $submittedGroups = $form_state['values']['groups'];
+  $contentID = $form_state['values']['groupcontentid'];
+
+  $users = dl_assignments_eligable_users_from_group($submittedGroups,$contentID);
+
+  $details['instructions'] = $form_state['values']['agInstructions'];
+  $details['duedate'] = $form_state['values']['agDuedate'];
+  if ($users) {
+    dl_assignments_make_assignment_batch($users,$contentID,$details);
+  }
+  else {
+    drupal_set_message('Already assigned to this group.');
+  }
+  return "";
+}
+
+/*
+* Test to confirm the user has permissions to make assignments.
+*/
+function dl_assignmnets_permssion_to_assign_to_people($users){
+  Global $user;
+  //if users were not sent
+  if(!is_array($users) || count($users)==0){
+    return false;
+  }
+  //also if they are the admin of the organization, allow that. otherwise fail
+  $orgID = organization_control_orgID($user);
+  if(!organization_control_is_group_admin($orgID,$user->uid)){
+    return false;
+  }
+
+  //now go through each user and verify they are a member
+//lets do this with a single query. Looping, loading users and testing membership with og_is_member is expensive.
+  $query = db_select('og_membership','m');
+  $query->fields('m',array('etid'));
+  $query->condition('m.gid',$orgID,"<>");
+  $query->condition('m.field_name','og_user_node');
+  $query->condition('m.entity_type',"user");
+  $query->condition('m.group_type',"node");
+  $query->condition('m.etid',$users,"IN");
+  $results = $query->execute();
+  if($results->rowCount()>0){
+    return false;
+  }
+  return true;
+}
+
+/*
+* Test to confirm the user has permissions to make assignments.
+*/
+function dl_assignmnets_permssion_to_assign_to_groups($submittedGroups){
+  Global $user;
+  //if group were not sent
+  if(!is_array($submittedGroups) || count($submittedGroups)==0){
+    return false;
+  }
+
+  //get the gids for the groups the current user is allowed to make assignments in.
+  $groups = orggroups_autocomplete(null,'array');
+  //also if they are the admin of the organization, allow that.
+  //if they are not an admin, reject all of this
+  $orgID = organization_control_orgID($user);
+  if(organization_control_is_group_admin($orgID,$user->uid)){
+    $groups[$orgID] = organization_control_orgName($orgID);
+  }
+  else{
+    return false;
+  }
+
+  if(!is_array($groups) || count($groups)==0){
+    return false;
+  }
+  //if one of the submitted groups is not in the current org return false.
+  foreach($submittedGroups as $g){
+    if(!isset($groups["$g"])){
+      return false;
+    }
+  }
+  return true;
+}
+
+/*
+* Test to confirm the content is assignable. Does not imply per user permissions, instead
+* simplies confirms its a content type we allow
+*/
+function dl_assignments_permission_to_assign_content($contentID){
+  if(!is_numeric($contentID)){
+    return false;
+  }
+  //look up the node type
+  $query = db_select('node', 'n');
+  $query->condition('nid',$contentID);
+  $query->addField('n','type');
+  $results = $query->execute();
+  while($result = $results->fetchAssoc()){
+    if($result['type']!="article" && $result['type']!="video"){
+      return false;
+    }
+  }
+  return true;
+}
+
+/*
+* Adjustments for assignments using hook form alter. Including:
+*   -Exposed filter for completed on assignment views
+*/
+function dl_assignments_form_alter(&$form,&$form_state){
+  if($form['#form_id']=="views_exposed_form" && $form['#id']=="views-exposed-form-my-assignments-page"){
+
+    $form['field_completed_value_op']['#options'] = array(
+      'all'=>'All',
+      'empty'=>'Not Completed',
+      'not empty'=>'Completed',
+    );
+    $form['field_completed_value_op']['#title'] = "";
+    $form['field_completed_value_op']['#default_value'] = "all";
+    $form['field_completed_value_op']['#type'] = "radios";
+
+    $form['field_completed_value']['#type'] = "hidden";
+
+  }
+if($form['#form_id']=="views_exposed_form" && $form['#id']=="views-exposed-form-assignments-admin-page"){
+
+    $form['field_completed_value_op']['#options'] = array(
+      'all'=>'All',
+      'empty'=>'Not Completed',
+      'not empty'=>'Completed',
+    );
+    $form['field_completed_value_op']['#title'] = "";
+    $form['field_completed_value_op']['#default_value'] = "all";
+    $form['field_completed_value_op']['#type'] = "radios";
+
+    $form['field_completed_value']['#type'] = "hidden";
+
+  }
+
+
+}
+
+/*
+* CUSTOM VBO Actions
+*/
+
+
+/*
+* Define the custom VBO actions
+*/
+function dl_assignments_action_info() {
+  $items = array();
+    $items['dl_assignments_unpublish_content_action'] = array(
+      'type' => 'entity',
+      'label' => t('Remove'),
+      'behavior' => array('create_property'),
+      'configurable' => TRUE,
+      'vbo_configurable' => TRUE,
+      'triggers' => array('any'),
+    );
+  return $items;
+}
+/*
+* We will use the form step to do our validation. We will mimic the 'confirmation' step.
+*/
+
+function dl_assignments_unpublish_content_action_form($context){
+  $form['header'] = array (
+    '#type' => 'markup',
+    '#markup' => "<h1>Remove Assignment(s)</h1><p>This can not be undone. Would you like to proceed?</p>",
+    '#required' => TRUE
+  );
+  return $form;
+}
+/*
+ * Validate the form to remove content
+ */
+function dl_assignments_unpublish_content_action_validate(&$form,&$form_state){
+  Global $user;
+  $currentGroup = arg(2);
+  $contentArray = $form_state['selection'];
+  if(organization_control_is_group_admin($currentGroup,$user->uid)!==TRUE && organization_control_is_group_admin_by_subgroup($currentGroup,$user->uid)!==TRUE){
+     form_set_error("header","There was a permission error with your group permissions. Contact administrator.");
+   }
+
+  foreach($contentArray as $c){
+    $query = db_select('field_data_field_assignee','a');
+    $query->condition('a.entity_id',$contentArray,'IN');
+    $query->leftjoin('og_membership','og','og.entity_type=\'user\' AND og.etid=a.field_assignee_target_id AND og.state=\'1\' AND og.gid=\''.$currentGroup.'\' ');
+    $query->IsNULL('og.id');
+    $query->addField('a',"field_assignee_target_id");
+    $query->distinct();
+    $results = $query->execute();
+    if($results->rowCount()!=0){
+      form_set_error('markup',"There was a permission error with one of the assignees. Contact administrator.");
+    }
+  }
+}
+
+/*
+ * Process The a form to remove content
+ */
+
+function dl_assignments_unpublish_content_action_submit(&$form,&$form_state){
+  $return['selection'] = $form_state['selection'];
+  return $return;
+}
+
+
+/*
+* Custom VBO action  to remove assignments
+*/
+function dl_assignments_unpublish_content_action($content, $context) {
+  $content = $context['selection'];
+
+  //create an operation foreach person.
+  $operations = array();
+
+  foreach($content as $c){
+    // This function will contain code for node creation.
+    $operations[] = array('dl_assignments_unpublish_assignment',array($c));
+  }
+
+  // Start Batch of node creation.
+  $batch = array(
+    'title' => t('Removing Assignments'),
+    'operations' => $operations,
+    'finished' => 'dl_assignments_unpublish_assignment_batch_finish',
+    'init_message' => t('Removing...'),
+    'progress_message' => t('Removed @current out of @total.'),
+    'error_message' => t('Assignments could not be removed.'),
+  );
+
+  // Set the batch operation.
+  batch_set($batch);
+
+  return $content;
+}
+/*
+* This function simply unpublishes content. It was created to support a batch process for unpublishing assignments
+*/
+function dl_assignments_unpublish_assignment($contentID){
+  $node = node_load($contentID);
+  if($node!==false){
+    $node->status = 0;
+    node_save($node);
+  }
+}
+/*
+* Finish support function for a batch process for unpublishing assignments
+*/
+function dl_assignments_unpublish_assignment_batch_finish(){
+   // drupal_set_message('Assignment removed.');
+}
+
+/*
+ * provide a block content for changing the currently viewed group in the admin pages.
+ * Shows groups the current user is an admin of
+ */
+function dl_assignments_group_admin_block_content(){
+  $generator['dl_assignments_group_block_content_admin_form'] = drupal_get_form('dl_assignments_group_block_content_admin_form');
+  return $generator;
+
+}
+function dl_assignments_group_block_content_admin_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //Wrap this section in a div.
+  $orgID = organization_control_orgID();
+  $groups = array($orgID=>organization_control_orgName($orgID));
+  $groups = $groups + orggroups_autocomplete('','array');
+  $form['chgroups'] = array (
+    '#type' => 'select',
+    '#title' => t('Change Group'),
+    '#options' => $groups,
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Go'),
+  );
+  return $form;
+}
+function dl_assignments_group_block_content_admin_form_submit($form, &$form_state){
+  drupal_goto('my-organization/assignments/'.$form_state['values']['chgroups']);
+}
+/*
+* Returns TRUE if any admins from a given organization have created at least one of a given content type.
+*/
+function dl_assignments_content_has_organization($organization, $bundle) {
+  $query = new EntityFieldQuery;
+  $query->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', $bundle)
+    ->propertyCondition('status', 1)
+    ->fieldCondition('field_organization', 'target_id', $organization);
+
+  $results = $query->execute();
+
+  return isset($results['node']);
+}
+/*
+* Returns number of assignments a given user has that have not been accessed.
+*/
+function dl_assignments_user_has_assignments($uid) {
+  $query = new EntityFieldQuery;
+  $query->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', 'assignment')
+    ->propertyCondition('status', 1)
+    ->fieldCondition('field_assignee', 'target_id', $uid);
+
+  $results = $query->execute();
+  $total = 0;
+
+  if (isset($results['node'])) {
+    $results = $results['node'];
+    foreach($results as $result) {
+      $assignment = node_load($result->nid);
+      // only look at assignments after Jan 17, 2016 PST
+      if ($assignment->created > 1453118400) {
+        $content = node_load($assignment->field_assigned_content['und'][0]['target_id']);
+        if (isset($content->nid) && !node_last_viewed($content->nid) && empty($assignment->field_completed)) {
+          $total++;
+        }
+      }
+    }
+  }
+
+  return $total;
+}
+
+/*
+* Returns number of assignments a given user has not completed.
+*/
+function dl_assignments_user_has_incomplete_assignments($uid) {
+  $query = new EntityFieldQuery;
+  $query->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', 'assignment')
+    ->propertyCondition('status', 1)
+    ->fieldCondition('field_assignee', 'target_id', $uid);
+
+  $results = $query->execute();
+  $total = 0;
+
+  if (isset($results['node'])) {
+    $results = $results['node'];
+    foreach($results as $result) {
+      $assignment = node_load($result->nid);
+      $content = node_load($assignment->field_assigned_content['und'][0]['target_id']);
+      if (isset($content->nid) && empty($assignment->field_completed)) {
+        $total++;
+      }
+    }
+  }
+  return $total;
+}
+
+/*
+* Returns true if given user has a given assignment
+*/
+function dl_assignments_user_has_assignment_or_completed($uid, $contentID) {
+  //check if already assigned
+  $query = db_select('field_data_field_assignee', 'a');
+  $query->condition('a.field_assignee_target_id', $uid, '=');
+  $query->leftjoin('field_data_field_completed','ap','ap.entity_id=a.entity_id');
+  $query->join('field_data_field_assigned_content','ac','ac.field_assigned_content_target_id='.$contentID.' AND ac.entity_id=a.entity_id');
+  $query->leftjoin('node','n','n.nid = a.entity_id');
+  $query->condition('n.status', '1', '=');
+  $query->addField('n','status');
+  $results = $query->execute();
+  if($results->rowCount() > 0){
+    return 1;
+  }
+
+  //confirm they have not completed the content on their own.
+  //This is based on quiz_my_results() but modified to search for all people in one query
+  //and to get the quiz id associated with a contentid
+  $results = db_query('
+    SELECT
+      qnp.pass_rate,
+      qnrs.score,
+      qnrs.uid
+    FROM
+      {quiz_node_properties} qnp
+    INNER JOIN
+      {quiz_node_results} qnrs ON qnrs.vid = qnp.vid
+    INNER JOIN
+      {field_data_field_related_quiz} as q
+        ON
+      q.entity_id = :nid && q.field_related_quiz_target_id = qnrs.nid
+    WHERE
+      qnrs.uid = :uid
+        AND
+      qnrs.is_evaluated = 1
+      	AND
+      qnrs.score > qnp.pass_rate
+    ORDER BY
+      qnrs.result_id DESC
+    ',
+    array(':uid' => $uid, ':nid' => $contentID)
+  );
+  // Create an array out of the results.
+  while ($r = $results->fetchAssoc()) {
+    return 1;
+  }
+  return 0;
+}
+
+/* To get all filters to fit on the my assignment page, we reduce the input field size on some fields */
+
+function dl_assignments_form_views_exposed_form_alter(&$form, $form_state) {
+  if ($form['#id'] == 'views-exposed-form-assignments-admin-page') {
+    $t=1;
+    $form['title']['#size'] = 25;
+    $form['assigned_to']['#size'] = 25;
+    $form['assigned_by']['#size'] = 25;
+    $t=1;
+  }
+}

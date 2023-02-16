@@ -1,0 +1,4 @@
+name = atDove reroute email module modifications
+description = "Alterations to reroute email module."
+core = 7.x
+package = "atDove Customization"

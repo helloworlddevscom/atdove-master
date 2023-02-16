@@ -1,0 +1,11 @@
+name = AtDove Image Styles
+description = AtDove Image Styles
+core = 7.x
+package = Features
+features[features_api][] = api:2
+features[image][] = 1280px_wide
+features[image][] = hero
+features[image][] = profile_photo
+features[image][] = square400
+features[image][] = square800
+features_exclude[dependencies][image] = image

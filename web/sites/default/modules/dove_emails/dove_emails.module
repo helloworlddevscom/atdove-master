@@ -1,0 +1,35 @@
+<?php
+
+/**
+ * Implements hook_mail_alter();
+ */
+function dove_emails_mail_alter(&$message) {
+  dpm($message);
+  //$message['mandrill_template_content'] doesn't work unless template is mapped to an email key. This is not
+  //feasable for our setup, but I don't think we'll need to use Mandrill edit fields. Mandrill merge_vars should
+  //cover all of our use cases.
+  switch ($message['id']) {
+    case 'mandrill_test':
+      $message['mandrill_template_content'][] = array(
+        'name' => 'coolmessage',
+        'content' => 'This is a cool message.',
+      );
+      break;
+  }
+
+}
+
+/**
+ * Implements hook_mandrill_mail_alter();
+ */
+function dove_emails_mandrill_mail_alter(&$mandrill_params, $message)  {
+  // here is where we make use of Mandrill merge_vars.
+  switch ($message['id']) {
+    case 'mandrill_test':
+      $mandrill_params['message']['global_merge_vars'][] = array(
+        'name' => 'FIRSTNAME',
+        'content' => 'Biscuithead',
+      );
+      break;
+  }
+}

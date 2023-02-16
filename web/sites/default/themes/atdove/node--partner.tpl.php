@@ -1,0 +1,1 @@
+<img src="<?php print image_style_url("large", $content['field_image'][0]['#item']['uri']); ?>" />

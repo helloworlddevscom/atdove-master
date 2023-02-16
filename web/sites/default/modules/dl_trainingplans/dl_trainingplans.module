@@ -1,0 +1,1487 @@
+<?php
+
+/**
+ * @file dl_trainingplans.module
+ * This module provides functionality, hooks, security checks, and access control for atDove's Training Plans
+ */
+
+/**
+ * Implements hook_menu(). (Routing)
+ */
+function dl_trainingplans_menu() {
+  $items = array();
+  $items['trainingplans/myplans/autocomplete/%'] = array(
+    'title' => 'Existing Training Plans Filtered by Current Organization',
+    'page callback' => 'dl_trainingplans_myplans_list',
+    'access callback' => 'dl_trainingplans_list_access',
+    'page arguments' => array(3),
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/trainingplan/%'] = array(
+    'title' => 'Training Plan Details',
+    'page callback' => 'dl_trainingplans_admin_single_training_plan_page',
+    'page arguments' => array(2),
+    'type' => MENU_CALLBACK,
+    'access callback' => 'dl_trainingplans_admin_access_validate',
+  );
+  $items['my-organization/stocktrainingplan/%'] = array(
+    'title' => 'Stock Training Plan Details',
+    'page callback' => 'dl_trainingplans_admin_single_stock_training_plan_page',
+    'page arguments' => array(2),
+    'type' => MENU_CALLBACK,
+    'access callback' => 'dl_trainingplans_admin_access_validate',
+  );
+  $items['my-organization/trainingplans/all'] = array(
+    'title' => 'Training Plan Details',
+    'page callback' => 'dl_trainingplans_admin_all_training_plans_page',
+    'type' => MENU_CALLBACK,
+    'access callback' => 'dl_trainingplans_admin_access_validate',
+  );
+  $items['my-organization/trainingplans/stockalter/%'] = array(
+    'title' => 'Stock Training Plan Clone',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('dl_trainingplans_stockalter_form', 3),
+    'access callback' => 'dl_trainingplans_admin_access_validate',
+  );
+  return $items;
+}
+
+
+/*
+ * provide a blocks
+ */
+function dl_trainingplans_block_info(){
+  $blocks = array();
+  $blocks['add_to_tp_modal'] = array(
+    'info' => t('Add Content to a Training Plan'),
+  );
+  $blocks['assign_tp_modal'] = array(
+    'info' => t('Assign Training Plans Modal'),
+  );
+  $blocks['create_new_tp_modal'] = array(
+    'info' => t('Create New Training Plan Modal'),
+  );
+  return $blocks;
+}
+
+/*
+ * provide block details
+ */
+
+function dl_trainingplans_block_view($delta = ''){
+  $block = array();
+  switch ($delta) {
+    case 'add_to_tp_modal':
+      $block['subject'] = '';
+      $block['content'] = dl_trainingplans_add_to_tp_content();
+    break;
+    case 'assign_tp_modal':
+      $block['subject'] = '';
+      $block['content'] = dl_trainingplans_assign_to_person_modal_content();
+    break;
+    case 'create_new_tp_modal':
+      $block['subject'] = '';
+      $block['content'] = dl_trainingplans_create_modal_content();
+      break;
+  }
+  return $block;
+}
+
+/**
+ * A JSON object or array containing results training plans
+ * Restricts suggestions to training plans in the organization the current user is an admin of
+*/
+function dl_trainingplans_myplans_list($contentID = '',$format='json') {
+  //Identify the current org.
+  $currentOrg = organization_control_orgID();
+  if($currentOrg==false){
+    drupal_set_message('You must be in an organization to have training plans.','warning');
+    return;
+  }
+  $tps = array();
+  $query = db_select('node','n');
+  $query->condition('n.status',1);
+  $query->condition('n.type','training_plan');
+  $query->join('field_data_field_organization','org','org.bundle=\'training_plan\' AND org.entity_id=n.nid AND org.field_organization_target_id='.$currentOrg);
+  if($contentID != ''){
+    $query->leftjoin('field_data_field_related_articles','a','a.bundle=\'training_plan\' AND a.entity_id=n.nid AND a.field_related_articles_target_id='.$contentID);
+    $query->addField('a','field_related_articles_target_id');
+    $query->leftjoin('field_data_field_related_videos','v','v.bundle=\'training_plan\' AND v.entity_id=n.nid AND v.field_related_videos_target_id='.$contentID);
+    $query->addField('v','field_related_videos_target_id');
+  }
+  $query->addField('n','title');
+  $query->addField('n','nid');
+  $results = $query->execute();
+  while($result = $results->fetchAssoc()){
+    $tps[$result['nid']]['name'] = $result['title'];
+    //if this content, regardless of being an article or video is included, disable it and mark it as so
+    if(
+        ( isset($result['field_related_articles_target_id']) && $result['field_related_articles_target_id']>0 )
+         ||
+        ( isset($result['field_related_videos_target_id']) && $result['field_related_videos_target_id']>0 )
+    ){
+      $tps[$result['nid']]['status'] = 0;
+      $tps[$result['nid']]['msg'] = "Already Included";
+    }
+    else{
+      //default to enabled, this may get overwritten
+      $tps[$result['nid']]['status'] = 1;
+      $tps[$result['nid']]['msg'] = "";
+    }
+  }
+  if($format=='json'){
+    drupal_json_output($tps);
+  }
+  elseif($format=='array'){
+    return $tps;
+  }
+}
+
+function dl_trainingplans_list_access(){
+  $currentOrg = organization_control_orgID();
+  return organization_control_is_group_admin($currentOrg);
+}
+
+/*
+ * Provide the typical forms used when Adding Content to Training Plans
+ */
+
+function dl_trainingplans_add_to_tp_content(){
+  Global $user;
+  $output = array();
+  $output['markupHeader'] = array(
+    '#type' => 'markup',
+    '#markup' => '<div class="assign-to-training-plan-modal"><h2>Add To Training Plan</h2><a class="close-training-modal-window" href="#">X</a><div class="modal-inner-wrapper">',
+    '#weight' => '10'
+  );
+
+  //if they are active and can make assignments
+  if(organization_control_user_has_role("Subscriber", $user)) {
+    //only include the 'add to existing' form if there are existing training plans.
+    if(count(dl_trainingplans_myplans_list('','array'))!=0){
+        $output['dl_trainingplans_add_to_tp_form'] = drupal_get_form('dl_trainingplans_add_to_tp_form');
+        $output['dl_trainingplans_add_to_tp_form']['#weight'] = '15';
+    }
+    $output['dl_trainingplans_add_and_create_tp_form'] = drupal_get_form('dl_trainingplans_add_and_create_tp_form');
+    $output['dl_trainingplans_add_and_create_tp_form']['#weight'] = '20';
+  }else{
+   //Otherwise, Hit them with marketing.
+    $output['premiumTPMsg'] = array(
+      '#type' => 'markup',
+      '#markup' => '<p>Training plans allow you to organize assignments for your organization however it requires a premium account. <a class="modal-sign-up-button" href="/future-billing">Sign up for the Free trial</a>.</p>',
+      '#weight' => '20'
+    );
+  }
+  $output['markupFooter'] = array(
+    '#type' => 'markup',
+    '#markup' => '</div></div>',
+    '#weight' => '25'
+  );
+  return $output;
+}
+
+/*
+* This is the form to add content to an existing training plan
+*/
+
+function dl_trainingplans_add_to_tp_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //Wrap this section in a div.
+  $form['plans'] = array (
+    '#type' => 'select',
+    '#title' => t('Add To An Existing Plan:'),
+    '#options' => array(),
+    '#multiple' => TRUE,
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'data-placeholder' => 'Select Plan'
+    )
+  );
+  $form['tpcontentid'] = array (
+    '#type' => 'hidden',
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'id' => 'tpcontentid'
+    )
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Add'),
+  );
+  return $form;
+}
+
+/*
+* Validation for the form to add an existing training plan
+*/
+function dl_trainingplans_add_to_tp_form_validate(&$form, &$form_state){
+  $submittedPlans = $form_state['values']['plans'];
+  $contentID = $form_state['values']['tpcontentid'];
+  $currOrg =  organization_control_orgID();
+  if($currOrg==false){
+    form_set_error('plans','You do not have permission to managed organizations');
+  }
+  //Does the current user have admin rights to this
+  if(!organization_control_is_group_admin($currOrg)){
+    form_set_error('plans','You do not have permission to managed training plans');
+  }
+  //Does the training plan belong to this org
+  foreach($submittedPlans as $spk => $spv){
+    $query = db_select('field_data_field_organization', 'o');
+    $query->condition('o.entity_id',$spk);
+    $query->condition('o.bundle','training_plan');
+    $query->condition('o.field_organization_target_id',$currOrg);
+    $query->addField('o','field_organization_target_id');
+    $results = $query->execute();
+    if(!$results->rowCount()){
+      form_set_error('plans','You do not have permsission to these training plans');
+    }
+  }
+}
+
+/*
+* Submit functionality for the form to add content to an existing training plan
+*/
+function dl_trainingplans_add_to_tp_form_submit($form, &$form_state){
+  $submittedPlans = $form_state['values']['plans'];
+  $contentID = $form_state['values']['tpcontentid'];
+  //for each plan,
+  foreach($submittedPlans as $spk => $spv){
+    //find out what type of content this is
+    //also look up the TP title and content title to use in the message
+    $query = db_select('node','n');
+    $query->condition('n.nid',$contentID);
+    $query->addField('n','type');
+    $query->addField('n','title');
+    $results = $query->execute();
+    $result = $results->fetchAssoc();
+    $type = $result['type'];
+    $contentTitle = $result['title'];
+    //load the existing training plan
+    $tp = node_load($spk);
+    //load the related content field for this type.
+    $relatedContent = array();
+    if($type == "article" && count($tp->field_related_articles) > 0){
+      $relatedContent = $tp->field_related_articles['und'];
+    }
+    if($type == "video" && count($tp->field_related_videos) > 0){
+      $relatedContent = $tp->field_related_videos['und'];
+    }
+    //confirm this content is not already there.
+    //because of the odd format I think we have to loop and can't use in_array
+    $exists = false;
+    foreach($relatedContent as $rc){
+      if($rc == $contentID){
+        $exists = true;
+      }
+    }
+    //add it
+    if($exists!=true){
+      switch($type){
+        case"article":
+          $tp->field_related_articles['und'][] = array('target_id'=>$contentID);
+        break;
+        case"video":
+          $tp->field_related_videos['und'][] = array('target_id'=>$contentID);
+        break;
+      }
+    }
+    //save
+    node_save($tp);
+    //success message.
+    drupal_set_message("<em>".$contentTitle."</em> was added to the Training Plan: <em>".$tp->title."</em>");
+  }//end foreach training plan
+  return "";
+}
+
+/*
+* Stockalter menu access callback validator
+*/
+function dl_trainingplans_admin_access_validate() {
+  global $user;
+  return organization_control_is_any_admin() || in_array('administrator', array_values($user->roles));
+}
+
+/*
+* This is the form to clone a stock training plan
+*/
+function dl_trainingplans_stockalter_form($form, &$form_state, $variable) {
+  $node = node_load($variable);
+  $form = array();
+  $form['#validate'][] = 'dl_trainingplans_stockalter_form_validate';
+  $form['stockalter']['node'] = array (
+    '#type' => 'hidden',
+    '#value' => $variable,
+  );
+  $form['stockalter']['clonename'] = array (
+    '#type' => 'item',
+    '#title' => t('Create a clone of ' . $node->title . '?'),
+  );
+  $form['stockalter']['clonetext'] = array (
+    '#type' => 'markup',
+    '#markup' => '<p>In this case, easier is truly better. When you clone a Stock Training Plan, we will move that entire plan over to where it will be listed under your Custom Training Plans as well. From there you can add and remove videos, articles and blogs to customize to your specific training and education needs.</p>',
+  );
+  $form['stockalter']['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Create'),
+  );
+  $form['stockalter']['cancel'] = array(
+		'#type' => 'button',
+		'#value' => t('Cancel'),
+		'#prefix' => '     ',
+		'#attributes' => array('onClick' => 'history.go(-1); return true;'),
+		'#post_render' => array('dl_trainingplans_change_button_type'),
+	);
+  return $form;
+}
+
+function dl_trainingplans_stockalter_form_submit($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID($user);
+  $node = node_load($form_state['values']['node']);
+  // unset version and node ids
+  unset($node->nid);
+  unset($node->vid);
+  unset($node->path);
+  // rename
+  $node->title = $node->title . ' - Customized Version';
+  // make private
+  $node->field_ok_for_public['und'][0]['value'] = 0;
+  // assign to user's group
+  $node->field_author_org['und'][0]['target_id'] = $orgID;
+  $node->field_organization['und'][0]['target_id'] = $orgID;
+  $node->name = $user->name;
+  // remove from stock
+  $node->field_stock['und'][0]['value'] = 0;
+  // save
+  node_save($node);
+  drupal_set_message(t($node->title . ' has been created and is ready for you to customize.'));
+  $form_state['redirect'] = "my-organization/trainingplan/" . $node->nid;
+}
+
+/*
+* Stockalter form validates that an admin is cloning a stock training plan.
+*/
+function dl_trainingplans_stockalter_form_validate($form, &$form_state) {
+  global $user;
+  if (!(organization_control_is_any_admin() || in_array('administrator', array_values($user->roles)))) {
+    form_set_error('form','You do not have permission to create training plans');
+  }
+}
+
+/*
+* This turns a given form button into a submit which can then be redirected based on attributes
+*/
+function dl_trainingplans_change_button_type($markup, $element) {
+	$markup = str_replace('type="submit', 'type="button', $markup);
+	return $markup;
+}
+
+/*
+* This is the form to add content to a new training plan
+*/
+
+function dl_trainingplans_add_and_create_tp_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //Wrap this section in a div.
+  $form['newplanname'] = array (
+    '#type' => 'textfield',
+    '#title' => t('Create a New Plan Named:'),
+  );
+  $form['tpnewcontentid'] = array (
+    '#type' => 'hidden',
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'id' => 'tpnewcontentid'
+    )
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Create'),
+  );
+  return $form;
+}
+
+/*
+* Validation for the form to add content to a new training plan
+*/
+function dl_trainingplans_add_and_create_tp_form_validate(&$form, &$form_state){
+  //Does the current user have admin rights to this
+  $currOrg =  organization_control_orgID();
+  if($currOrg==false){
+    form_set_error('newplanname','You do not have permission to managed organizations (2)');
+  }
+  //Does the current user have admin rights to this
+  if(!organization_control_is_group_admin($currOrg)){
+    form_set_error('newplanname','You do not have permission to create training plans');
+  }
+  //was a title set
+  if(!isset($form_state['values']['newplanname']) || $form_state['values']['newplanname']==""){
+    form_set_error('newplanname',"You must give your new training plan a title.");
+  }
+}
+
+/*
+* Submit functionality for the form to add content to a new training plan
+*/
+function dl_trainingplans_add_and_create_tp_form_submit($form, &$form_state){
+  $submittedPlanTitle = $form_state['values']['newplanname'];
+  $contentID = $form_state['values']['tpnewcontentid'];
+  global $user;
+  $orgID = organization_control_orgID($user);
+  //find out what type of content this is
+  //also look up the TP title and content title to use in the message
+  $query = db_select('node','n');
+  $query->condition('n.nid',$contentID);
+  $query->addField('n','type');
+  $query->addField('n','title');
+  $results = $query->execute();
+  $result = $results->fetchAssoc();
+  $type = $result['type'];
+  $contentTitle = $result['title'];
+
+  //start a new node of type training plan
+  $node = new stdClass();
+  $node->type = "training_plan";
+  $node->title = $submittedPlanTitle;
+  node_object_prepare($node);
+  $node->language = LANGUAGE_NONE;
+  $node->uid = $user->uid;
+  $node->status = 1;
+  $node->promote = 0;
+  $node->comment = 0;
+  //add this content.
+  //Add this org as the creator and the organization.
+  $node->field_organization[$node->language][] = array(
+    'target_id' => $orgID,
+    'target_type' => 'node',
+  );
+  $node->field_author_org[$node->language][] = array(
+    'target_id' => $orgID,
+    'target_type' => 'node',
+  );
+  $node->field_stock[$node->language][] = array(
+    'value' => 0,
+  );
+  $node->okay_for_public[$node->language][] = array(
+    'value' => 0,
+  );
+  //assigned content
+  switch($type){
+    case"article":
+      $node->field_related_articles[$node->language][] = array(
+        'target_id' => $contentID,
+        'target_type' => 'node',
+      );
+    break;
+    case"video":
+      $node->field_related_videos[$node->language][] = array(
+        'target_id' => $contentID,
+        'target_type' => 'node',
+      );
+    break;
+  }
+
+  //save
+  $node = node_submit($node); // Prepare node for saving
+  node_save($node);
+  //message
+  drupal_set_message("Training Plan <em>".$node->title."</em> was created and <em>".$contentTitle."</em> was added to it.");
+  return "";
+}
+
+
+
+/*
+ * provide a block content for Creating a TP
+ */
+
+function dl_trainingplans_create_modal_content(){
+  Global $user;
+
+  $output = array();
+
+  $output['markupHeader'] = array(
+    '#type' => 'markup',
+    '#markup' => '<div class="create-training-plan-modal"><h2>New Training Plan</h2><a class="close-training-create-modal-window" href="#">X</a><div class="modal-inner-wrapper">',
+    '#weight' => '10'
+  );
+
+  //if they are active and can make assignments
+  if(organization_control_user_has_role("Subscriber", $user)) {
+    $output['dl_trainingplans_create_tp_form'] = drupal_get_form('dl_trainingplans_create_tp_form');
+    $output['dl_trainingplans_create_tp_form']['#weight'] = '15';
+  }else{
+    //Otherwise, Hit them with marketing.
+    $output['premiumAssignMsg'] = array(
+      '#type' => 'markup',
+      '#markup' => '<p>Assigning training plans is one of our user\'s favorite features but it requires a premium account. <a class="modal-sign-up-button" href="/future-billing">Sign up for the Free trial</a>.</p>',
+      '#weight' => '20'
+    );
+
+  }
+  $output['markupFooter'] = array(
+    '#type' => 'markup',
+    '#markup' => '</div></div>',
+    '#weight' => '25'
+  );
+
+  return $output;
+
+}
+
+
+/*
+ * Provide the typical forms used when Creating a new Training Plans
+ */
+
+function dl_trainingplans_create_tp_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+
+  $form['createnewplanname'] = array (
+    '#type' => 'textfield',
+    '#title' => t('Title'),
+  );
+  $form['tpcreatesubmit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Create'),
+    '#weight' => 35,
+  );
+  return $form;
+  }
+
+/*
+* This is the form to add content to a new training plan
+*/
+//
+//function dl_trainingplans_create_tp_form($form, &$form_state){
+//  //the Form API Array
+//  $form =array();
+//  $form['submit'] = array (
+//    '#type' => 'submit',
+//    '#value' => t('Create New Training Plan'),
+//  );
+//  return $form;
+//}
+
+/*
+* Validation for the form to add content to a new training plan
+*/
+function dl_trainingplans_create_tp_form_validate(&$form, &$form_state){
+  //Does the current user have admin rights to this
+  $currOrg =  organization_control_orgID();
+  if($currOrg==false){
+    form_set_error('createnewplanname','You do not have permission to managed organizations (2)');
+  }
+  //Does the current user have admin rights to this
+  if(!organization_control_is_group_admin($currOrg)){
+    form_set_error('createnewplanname','You do not have permission to create training plans');
+  }
+  //was a title set
+  if(!isset($form_state['values']['createnewplanname']) || $form_state['values']['createnewplanname']==""){
+    form_set_error('createnewplanname',"You must give your new training plan a title.");
+  }
+}
+
+/*
+* Submit functionality for the form to add content to a new training plan
+*/
+function dl_trainingplans_create_tp_form_submit($form, &$form_state){
+  $submittedPlanTitle = $form_state['values']['createnewplanname'];
+  global $user;
+  $orgID = organization_control_orgID($user);
+
+  //start a new node of type training plan
+  $node = new stdClass();
+  $node->type = "training_plan";
+  $node->title = $submittedPlanTitle;
+  node_object_prepare($node);
+  $node->language = LANGUAGE_NONE;
+  $node->uid = $user->uid;
+  $node->status = 1;
+  $node->promote = 0;
+  $node->comment = 0;
+  //add this content.
+  //Add this org as the creator and the organization.
+  $node->field_organization[$node->language][] = array(
+    'target_id' => $orgID,
+    'target_type' => 'node',
+  );
+  $node->field_author_org[$node->language][] = array(
+    'target_id' => $orgID,
+    'target_type' => 'node',
+  );
+  $node->field_stock[$node->language][] = array(
+    'value' => 0,
+  );
+  $node->okay_for_public[$node->language][] = array(
+    'value' => 0,
+  );
+
+  //save
+  $node = node_submit($node); // Prepare node for saving
+  node_save($node);
+  //message
+  drupal_set_message("Training Plan <em>".$node->title."</em> was created. You can start adding content!");
+  drupal_goto('/all');
+}
+
+/*
+ * Create a group admin page to manage details around a single training plan.
+*/
+function dl_trainingplans_admin_single_training_plan_page($nid){
+  //Currently this page is a couple of views embedded as blocks
+  $node = node_load($nid);
+  //is the current user a admin of the org that owns this training plan?
+  if(isset($node->field_organization['und'][0]['target_id']) && organization_control_is_group_admin($node->field_organization['und'][0]['target_id'])){
+
+    $output['header'] = array(
+      '#type' => 'markup',
+      '#markup' => "<h1>Training Plan:<br /> ".filter_xss($node->title).'</h1>',
+      '#weight' => '-25'
+    );
+    return $output;
+  }
+  else{
+    drupal_set_message('There was a permission error viewing that training plan.');
+    drupal_goto('/');
+  }
+}
+
+/*
+ * Create a group admin page to view details around a single stock training plan.
+*/
+function dl_trainingplans_admin_single_stock_training_plan_page($nid){
+  //Currently this page is a couple of views embedded as blocks
+  $node = node_load($nid);
+  //is the training plan stock
+  if(isset($node->field_stock['und'][0]['value']) && $node->field_stock['und'][0]['value'] == 1){
+    $output['header'] = array(
+      '#type' => 'markup',
+      '#markup' => "<h1>Stock Training Plan:<br/> ".filter_xss($node->title).'</h1>',
+      '#weight' => '-25'
+    );
+    return $output;
+  }
+  else{
+    drupal_set_message('It seems that training plan is not configured correctly to be a stock training plan');
+    drupal_goto('/');
+  }
+}
+
+/**
+ * We needed a training plan  view that shows related articles and videos.
+ * These relationships were three seperate entity reference fields.
+ * So we configured the view in Views UI to show related videos
+ * This module extends that view by doing the same query for articles and adding
+ * this additional queries as a union.
+ */
+
+/**
+ * Implements hook_views_pre_execute()
+ */
+function dl_trainingplans_views_pre_execute(&$view){
+   if($view->name == 'admin_training_plans_current_content'){
+    //get the node that we are finding related content for
+    $mainNID = $view->args[0];
+    //to match the current view, we must union and select these fields in this order
+      //nid
+      //node_field_data_field_related_videos_nid
+      //node_field_data_field_related_videos_type
+      //node_field_data_field_related_videos_title
+      //node_field_data_field_related_videos__node_counter_totalcoun
+      //node_field_data_field_related_videos__node_comment_statistic
+      //node_created
+      //field_data_field_image_node_entity_type
+      //field_data_body_node_entity_type
+      //field_data_field_duration_node_entity_type
+      //field_data_field_premium_node_entity_type
+      //field_data_field_accredited_for_node_entity_type
+      //field_data_field_credit_hours_node_entity_type
+
+    //create a new query for articles
+    $query2 = db_select('field_data_field_related_articles', 'ra');
+    //this will be a union so fields need to use the same name as the view
+    $query2->join('node','n','ra.field_related_articles_target_id=n.nid and n.type=\'article\' AND n.status=1 ');
+    //If these left joins were not limited to one value, it could break this union.
+    $query2->LeftJoin('field_data_body','b','b.entity_id = n.nid');
+    $query2->LeftJoin('field_data_field_duration','d','d.entity_id = n.nid');
+    $query2->LeftJoin('field_data_field_premium','p','p.entity_id = n.nid');
+    $query2->LeftJoin('node_counter','c','c.nid = n.nid');
+
+    $query2->LeftJoin('node_comment_statistics','s','s.nid = n.nid');
+
+    $query2->addField('n', 'nid', 'nid'); //nid
+    $query2->addField('ra', 'field_related_articles_target_id', 'node_field_data_field_related_videos_nid'); //node_field_data_field_related_videos_nid
+    $query2->addField('n', 'type', 'node_field_data_field_related_videos_type');//node_field_data_field_related_videos_type
+    $query2->addField('n', 'title', 'node_field_data_field_related_videos_title');//node_field_data_field_related_videos_title
+    $query2->addField('c', 'totalcount', 'node_field_data_field_related_videos__node_counter_totalcoun');//node_field_data_field_related_videos__node_counter_totalcoun
+    $query2->addField('s', 'comment_count', 'node_field_data_field_related_videos__node_comment_statistic');//node_field_data_field_related_videos__node_comment_statistic
+    $query2->addField('n', 'created', 'node_created');//node_created
+    $query2->addExpression("'node'",'field_data_field_image_node_entity_type'); //field_data_field_image_node_entity_type
+    $query2->addExpression("'node'",'field_data_body_node_entity_type');//field_data_body_node_entity_type
+    $query2->addExpression("'node'",'field_data_field_duration_node_entity_type');//field_data_field_duration_node_entity_type
+    $query2->addExpression("'node'",'field_data_field_premium_node_entity_type');//field_data_field_premium_node_entity_type
+    $query2->addExpression("'node'",'field_data_field_accredited_for_node_entity_type');//field_data_field_accredited_for_node_entity_type ARTICLES CAN NOT BE ACREDITED.
+    $query2->addExpression("'node'",'field_data_field_credit_hours_node_entity_type');//field_data_field_credit_hours_node_entity_type
+
+    $query2->condition('ra.entity_id', $mainNID, '=');
+
+    //look up the stats and sub it into the header like a token, kinda
+    //how many items are there.
+    $articleCountQuery = db_select('field_data_field_related_articles','a');
+    $articleCountQuery->join('node','n','a.field_related_articles_target_id=n.nid and n.type=\'article\' AND n.status=1 ');
+    $articleCountQuery->condition('a.entity_id', $mainNID, '=');
+    $articleCountQuery->addField('n', 'nid', 'nid');
+    $articleCountQueryResults = $articleCountQuery->execute();
+    $articleCount = $articleCountQueryResults->rowCount();
+    $videoCountQuery = db_select('field_data_field_related_videos','v');
+    $videoCountQuery->join('node','n','v.field_related_videos_target_id=n.nid and n.type=\'video\' AND n.status=1 ');
+    $videoCountQuery->condition('v.entity_id', $mainNID, '=');
+    $videoCountQuery->addField('n', 'nid', 'nid');
+    $videoCountQueryResults = $videoCountQuery->execute();
+    $videoCount = $videoCountQueryResults->rowCount();
+    $contentCount = $articleCount + $videoCount;
+
+    $videoDurationQuery = db_select('field_data_field_related_videos','v');
+    $videoDurationQuery->join('node','n','v.field_related_videos_target_id=n.nid and n.type=\'video\' AND n.status=1 ');
+    $videoDurationQuery->join('field_data_field_duration','d','n.nid=d.entity_id');
+    $videoDurationQuery->condition('v.entity_id', $mainNID, '=');
+    $videoDurationQuery->addExpression('sum(field_duration_value)', 'total');
+    $videoDurationQueryResults = $videoDurationQuery->execute()->fetchAssoc();
+    $videoDuration = $videoDurationQueryResults['total'];
+    $videoDurationHours = floor($videoDuration / 3600);
+    $videoDurationMins = floor($videoDuration / 60 % 60);
+    $videoDurationSecs = floor($videoDuration % 60);
+    $videoDurationStr = "";
+    if($videoDurationHours>0){
+      $videoDurationStr = $videoDurationHours. " Hours, ".$videoDurationMins." Minutes, ".$videoDurationSecs." Seconds";
+    }
+    elseif($videoDurationMins>0){
+      $videoDurationStr = $videoDurationMins." Minutes, ".$videoDurationSecs." Seconds";
+    }
+    elseif($videoDurationSecs>0){
+      $videoDurationStr = $videoDurationSecs." Seconds";
+    }
+
+    $view->header['area_text_custom']->options['content'] = str_replace("{{hook_views_pre_execute_course_hours_total}}", $videoDurationStr,$view->header['area_text_custom']->options['content']);
+    $view->header['area_text_custom']->options['content'] = str_replace("{{hook_views_pre_execute_course_count_total}}",$contentCount,$view->header['area_text_custom']->options['content']);
+
+    //union custom query with my_view default query
+    $query2->union($view->build_info['query'], 'UNION ALL');
+    //in order to prevent Cardinality violation errors i have to make a "total" query
+    $total_query = db_select($query2,'total')->fields('total');
+    //update views query and count_query with my new query.
+    $view->build_info['query'] = $total_query;
+    $view->build_info['count_query'] = $view->build_info['query']; //count_query is necessary for the pager
+
+   }
+}
+
+/*
+* Define the custom VBO actions
+*/
+function dl_trainingplans_action_info() {
+  $items = array();
+    $items['dl_trainingplans_remove_tp_item'] = array(
+      'type' => 'entity',
+      'label' => t('Remove Selected Training Plan Items'),
+      'behavior' => array('views_property'),
+      'configurable' => FALSE,
+      'vbo_configurable' => FALSE,
+      'triggers' => array('any'),
+    );
+    $items['dl_trainingplans_unpublish_tp_item'] = array(
+      'type' => 'entity',
+      'label' => t('Delete Selected Training Plan(s)'),
+      'behavior' => array('views_property'),
+      'configurable' => FALSE,
+      'vbo_configurable' => FALSE,
+      'triggers' => array('any'),
+    );
+  return $items;
+}
+
+/*
+* The action handler for the VBO action to remove items from a training plan
+* No validation is done on this, its assumed the access was built into the view
+*/
+
+function dl_trainingplans_remove_tp_item(&$node, $context) {
+    //Relevant vars
+    $trainingPlanID = $context['view_info']['arguments'][0];
+    $nidToRemove = $node->nid;
+    $nodeType = $node->type;
+
+    $tp = node_load($trainingPlanID);
+    if($nodeType == "video"){
+      //seems like we have to rebuild this array to avoid errors
+      foreach($tp->field_related_videos['und'] as $rk => $rv){
+        if($rv['target_id']==$nidToRemove){
+          unset($tp->field_related_videos['und'][$rk]);
+        }
+      }
+    }
+    if($nodeType == "article"){
+      foreach($tp->field_related_articles['und'] as $rk => $ra){
+        if($ra['target_id']==$nidToRemove){
+          unset($tp->field_related_articles['und'][$rk]);
+        }
+      }
+    }
+  $results = node_save($tp);
+  $message = t('%title was removed from %tpTitle', array(
+    '%title' => $node->title,
+    '%tpTitle' => $tp->title,
+  ));
+  drupal_set_message($message);
+}
+
+/*
+* The action handler for the VBO action to remove items from a training plan
+* No validation is done on this, its assumed the access was built into the view
+*/
+
+function dl_trainingplans_unpublish_tp_item(&$node, $context) {
+  //Relevant vars
+  $tpid = $node->nid;
+  //Confirm permissions by group admin
+  $tpOwner = $node->field_organization['und'][0]['target_id'];
+  if($node->field_organization['und'][0]['target_id'] != organization_control_orgID()){
+    $message = t('There was a permissions error deleting this training plan.');
+    drupal_set_message($message);
+    return '';
+  }
+  //unpublish the content
+  $node->status = 0;
+  node_save($node);
+  //return a success message
+  $message = t('%title was removed.', array(
+    '%title' => $node->title,
+  ));
+  drupal_set_message($message);
+}
+
+function dl_trainingplans_views_bulk_operations_form_alter(&$form, &$form_state, $vbo) {
+  if ( $form['#id'] == "views-form-admin-training-plans-all-plans-block" && $form_state['step'] == 'views_bulk_operations_confirm_form' && $form_state['operation']->operationId == "action::dl_trainingplans_unpublish_tp_item") {
+
+    //I just want the confirmation message to make more sense. But the only place in these arrays I can find that message is in rendered html.
+    $search = "/[^<h3>](.*)[^<\/h3>]/";
+    $replace = "You are deleting the following training plans:";
+    $form['description']['#markup'] = preg_replace('#('.preg_quote("<h3>").')(.*?)('.preg_quote("</h3>").')#si', '$1'.$replace.'$3', $form['description']['#markup']);
+    $form['description']['#weight'] = "-10";
+
+    //adjust the styleing of the buttons and cancel link
+    $form['actions']['#weight'] = "0";
+    $form['actions']['submit']['#attributes']['class'][] = 'tp_delete_submit';
+    $form['actions']['cancel']['#attributes']['class'][] = 'tp_delete_submit';
+    $form['actions']['cancel']['#attributes']['class'][] = 'cancel';
+
+    //put extra space between this view and the stock training plan view during confirmation
+    $form['footer']['#markup'] = "<div id='delete_tp_conf_clear'> </div>";
+    $form['footer']['#weight'] = "10";
+
+  }
+}
+
+
+/*
+* Hook Form Alter
+* Adjusts VBO labels on admin manage training plans page
+*/
+function dl_trainingplans_form_views_form_alter(&$form, &$form_state, $form_id){
+  // Adjust VBO text labels
+  if($form_id == "views_form_admin_training_plans_current_content_block"){
+    if (isset($form['select']) && $form['select']['#title'] == 'Operations'){
+      unset($form['select']['#title']);
+    }
+  }
+}
+
+/*
+ * A form of content that can be added to a training plan
+*/
+function dl_trainingplans_admin_add_content_form($form, &$form_state){
+  $form = array();
+  $form['newVideos'] = array (
+    '#type' => 'select',
+    '#title' => t('Add Videos'),
+    '#options' => dl_trainingplans_video_options(arg(2)),
+    '#attributes' => array(
+      'data-placeholder' => 'Select Videos'
+    ),
+    '#multiple' => TRUE,
+  );
+  $form['newArticles'] = array (
+    '#type' => 'select',
+    '#title' => t('Add Articles'),
+    '#options' => dl_trainingplans_article_options(arg(2)),
+    '#attributes' => array(
+      'data-placeholder' => 'Select Articles'
+    ),
+    '#multiple' => TRUE,
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Update Content'),
+  );
+  return $form;
+}
+
+/*
+ * Returns all video execpt video already added.
+*/
+function dl_trainingplans_video_options($tpid=null){
+  //if a tpid was provided, look up all videos already added.
+  if(!is_null($tpid)){
+    $tp = node_load($tpid);
+    $existingVideos = array();
+    if(isset($tp->field_related_videos['und'])){
+      foreach($tp->field_related_videos['und'] as $rk => $rv){
+        $existingVideos[] = $rv['target_id'];
+      }
+    }
+  }
+  //now look up all content
+  $query = db_select('node','n');
+  $query->condition('n.status','1');
+  $query->condition('n.type','video');
+  $query->addField('n','title');
+  $query->addField('n','nid');
+  $query->orderBy('title');
+  //if a tpid was provided, exept that content.
+  if(!is_null($tpid) && count($existingVideos)>0){
+    $query->condition('n.nid',$existingVideos,'NOT IN');
+  }
+  $results = $query->execute();
+  $videos = array();
+  $videos[] = "";
+  while($r = $results->fetchAssoc()){
+    $videos[$r['nid']] = $r['title'];
+  }
+  return $videos;
+}
+
+/*
+ * Returns all articles execpt articles already added.
+*/
+function dl_trainingplans_article_options($tpid=null){
+  //if a tpid was provided, look up all videos already added.
+  if(!is_null($tpid)){
+    $tp = node_load($tpid);
+    $existingArticles = array();
+    if(isset($tp->field_related_articles['und'])){
+      foreach($tp->field_related_articles['und'] as $rk => $ra){
+        $existingArticles[] = $ra['target_id'];
+      }
+    }
+  }
+  //now look up all content
+  $query = db_select('node','n');
+  $query->condition('n.status','1');
+  $query->condition('n.type','article');
+  $query->addField('n','title');
+  $query->addField('n','nid');
+  $query->orderBy('title');
+  //if a tpid was provided, exept that content.
+  if(!is_null($tpid) && count($existingArticles)>0){
+    $query->condition('n.nid',$existingArticles,'NOT IN');
+  }
+  $results = $query->execute();
+  $articles = array();
+  $articles[] = "";
+  while($r = $results->fetchAssoc()){
+
+    $articles[$r['nid']] = $r['title'];
+  }
+  return $articles;
+}
+
+/*
+ * form validatior for form of content that can be added to a training plan
+*/
+function dl_trainingplans_admin_add_content_form_validate(&$form, &$form_state){
+  Global $user;
+  //confirm this user has is an admin of group the training plan belongs to.
+  //find the group of this tp
+  $tp = node_load(arg(2));
+  $tpgid = $tp->field_organization['und'][0]['target_id'];
+  //check admin rights
+  if(!organization_control_is_group_admin($tpgid,$user->uid)){
+    form_set_error('','There was a permissions error. Please contact the administrator.');
+  }
+  //confirm we are not creating duplicate (no error, just remove)
+  //foreach submitted video
+  foreach($form_state['values']['newVideos'] as $v){
+    //the format of this field does not allow us to use something like in_array
+    if(isset($tp->field_related_videos['und'])) {
+      foreach ($tp->field_related_videos['und'] as $vArr) {
+        if ($vArr['target_id'] == $v) {
+          unset($form_state['values']['newVideos'][$v]);
+        }
+      }
+    }
+  }
+  //foreach submitted article
+  foreach($form_state['values']['newArticles'] as $a){
+    //the format of this field does not allow us to use something like in_array
+    if(isset($tp->field_related_videos['und'])) {
+      foreach ($tp->field_related_articles['und'] as $aArr) {
+        if ($aArr['target_id'] == $a) {
+          unset($form_state['values']['newArticles'][$a]);
+        }
+      }
+    }
+  }
+  //confirm at least one article or video was submitted.
+  if(count($form_state['values']['newVideos'])==0 && count($form_state['values']['newArticles'])==0){
+    form_set_error('newVideos','You need to choose at least one article or video to add.');
+  }
+}
+
+/*
+ * Form submit handler for form of content that can be added to a training plan
+ * This function does not validate permission. Its assumed you used the validate handler.
+*/
+function dl_trainingplans_admin_add_content_form_submit(&$form, &$form_state){
+  Global $user;
+  //load tp
+  $tp = node_load(arg(2));
+  //add new videos
+  //foreach submitted video
+  foreach($form_state['values']['newVideos'] as $v){
+    $tp->field_related_videos['und'][] = array('target_id'=>$v);
+  }
+  //add new articles
+  //foreach submitted article
+  foreach($form_state['values']['newArticles'] as $a){
+    $tp->field_related_articles['und'][] = array('target_id'=>$a);
+  }
+  //save tp
+  node_save($tp);
+  //set message.
+  drupal_set_message("New content added to the training plan.");
+}
+
+/*
+ * provide a block content for changing the currently viewed group
+ */
+
+function dl_trainingplans_assign_to_person_modal_content(){
+  Global $user;
+
+  $output = array();
+
+  $output['markupHeader'] = array(
+    '#type' => 'markup',
+    '#markup' => '<div class="assign-tp-modal"><h2>Training Plan Assignment</h2><a class="close-tpperson-modal-window" href="#">X</a><div class="modal-inner-wrapper">',
+    '#weight' => '10'
+  );
+
+  //if they are active and can make assignments
+  if(organization_control_user_has_role("Subscriber", $user)) {
+    $output['dl_trainingplans_assign_to_person_form'] = drupal_get_form('dl_trainingplans_assign_to_person_form');
+    $output['dl_trainingplans_assign_to_person_form']['#weight'] = '15';
+    $output['dl_trainingplans_assign_to_group_form'] = drupal_get_form('dl_trainingplans_assign_to_group_form');
+    $output['dl_trainingplans_assign_to_group_form']['#weight'] = '20';
+ }else{
+ //Otherwise, Hit them with marketing.
+  $output['premiumAssignMsg'] = array(
+    '#type' => 'markup',
+    '#markup' => '<p>Assigning training plans is one of our user\'s favorite features but it requires a premium account. <a class="modal-sign-up-button" href="/future-billing">Sign up for the Free trial</a>.</p>',
+    '#weight' => '20'
+  );
+
+ }
+  $output['markupFooter'] = array(
+    '#type' => 'markup',
+    '#markup' => '</div></div>',
+    '#weight' => '25'
+  );
+
+  return $output;
+
+}
+
+/*
+* This is the form to add a training plan to an individual.
+*/
+
+function dl_trainingplans_assign_to_person_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //Wrap this section in a div.
+
+  //We are going to try to only load options on an ajax request.
+  $people = array();
+  //$people = group_people_autocomplete('','array');
+
+  $form['tppeople'] = array (
+    '#type' => 'select',
+    '#title' => t('Assign to Person(s)'),
+    '#options' => $people,
+    '#multiple' => TRUE,
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'data-placeholder' => 'Select People'
+    ),
+    '#weight' => -1,
+  );
+  $form['tpDetails']['tpDuedate'] = array (
+    '#type' => 'date_popup',
+    '#title' => t('Due By [optional]'),
+    '#default_value' => '',
+    '#weight' => 10,
+    '#date_format' => 'Y-m-d',
+    '#date_label_position' => 'within',
+    '#date_year_range' => '0:+1'
+  );
+  $form['tpDetails']['tpInstructions'] = array (
+    '#type' => 'textfield',
+    '#title' => t('Instructions [optional]'),
+    '#weight' => 20,
+  );
+
+  $form['tpcontentid'] = array (
+    '#type' => 'hidden',
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'id' => 'tpcontentid'
+    )
+  );
+  $form['tpsubmit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Assign'),
+    '#weight' => 40,
+  );
+
+  return $form;
+}
+
+/*
+* Validation for the form to add a Training Plan to an individual.
+*/
+function dl_trainingplans_assign_to_person_form_validate(&$form, &$form_state){
+
+  //set some vars from submitted content
+  $tpid = $form_state['values']['tpcontentid'];
+  Global $user;
+  $submittedPeople = $form_state['values']['tppeople'];
+
+  //The Users array are users names, the existing functions expect uid.
+  $query = db_select('users','u');
+  $query->condition('u.name',$submittedPeople,'IN');
+  $query->addField('u','uid');
+  $query->addField('u','name');
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $uid = $r['uid'];
+    $users[$uid] = $uid;
+  }
+  $submittedPeople = $users;
+  $form_state['values']['tppeople'] = $users;
+
+   //Does the current user have rights to assign to this person.
+  if(!dl_assignmnets_permssion_to_assign_to_people($submittedPeople)){
+    form_set_error('tppeople','An illegal person option was detected. Contact administrator');
+  }
+
+  //confirm this user has is an admin of group the training plan belongs to or its stock
+  //find the group of this tp
+  $tp = node_load($tpid);
+  $stock = $tp->field_stock['und'][0]['value'];
+  if(!$stock){
+    $tpgid = $tp->field_organization['und'][0]['target_id'];
+  }
+  //check admin rights
+  if(!$stock && !organization_control_is_group_admin($tpgid,$user->uid)){
+    form_set_error('','There was a permissions error. Please contact the administrator.');
+  }
+
+  //if the due date is set, confirm its in the future
+  if(isset($form_state['values']['tpDuedate']) && $form_state['values']['tpDuedate']!=""){
+    //the date value is not a standard format and can fail in strtotime. We could explode and build a date with mktime but just do this
+    $date = explode("-",$form_state['values']['tpDuedate']);
+    $date = mktime(0,0,0,$date[1],$date[2],$date[0]);
+    if($date<time()){
+      form_set_error('tpDuedate','The due date must be in the future.');
+    }
+  }
+
+}
+
+/*
+* Submit functionality for the form to add a Training Plan to an individual.
+*/
+function dl_trainingplans_assign_to_person_form_submit($form, &$form_state){
+  $tpid = $form_state['values']['tpcontentid'];
+  $submittedPeople = $form_state['values']['tppeople'];
+
+  $details['instructions'] = $form_state['values']['tpInstructions'];
+  $details['duedate'] = $form_state['values']['tpDuedate'];
+  dl_trainingplans_make_assignment_batch($submittedPeople,$tpid,$details);
+  return "";
+}
+
+/*
+* This function assigns content to an array of users using batch processing.
+* It does not validate or sanitize and assumes validation has been performed.
+*/
+function dl_trainingplans_make_assignment_batch($users,$tpid,$details=null){
+  //create an operation foreach person.
+  $operations = array();
+  //get all the article content. To save resources we will do a query instead of a node_load().
+  $query = db_select('field_data_field_related_articles','a');
+  $query->condition('a.entity_id',$tpid);
+  $query->condition('a.bundle','training_plan');
+  $query->addField('a','field_related_articles_target_id','articleID');
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    foreach($users as $u => $name){
+      $operations[] = array('dl_assignments_make_assignment',array($u,$r['articleID'],$details,false));
+    }
+  }
+
+  //get all the video content. To save resources we will do a query instead of a node_load().
+  $query = db_select('field_data_field_related_videos','v');
+  $query->condition('v.entity_id',$tpid);
+  $query->condition('v.bundle','training_plan');
+  $query->addField('v','field_related_videos_target_id','videoID');
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    foreach($users as $u => $name){
+      $operations[] = array('dl_assignments_make_assignment',array($u,$r['videoID'],$details,false));
+    }
+  }
+  // Start Batch of node creation.
+  $batch = array(
+    'title' => t('Creating Assignments'),
+    'operations' => $operations,
+    'finished' => 'dl_trainingplans_make_assignment_batch_finish',
+    'init_message' => t('Assigning...'),
+    'progress_message' => t('Assigned @current out of @total.'),
+    'error_message' => t('Assignment could not be made.'),
+  );
+  // Set the batch operation.
+  batch_set($batch);
+}
+
+/*
+* The completion of the assign a Training Plan batch
+*/
+function dl_trainingplans_make_assignment_batch_finish($success, $results, $operations){
+  $assignees = array();
+  $duedate = $results['plans'][0]['duedate'];
+  $instructions = $results['plans'][0]['instructions'];
+  $to = array();
+
+  if (isset($results)) {
+    foreach ($results['plans'] as $plan) {
+      $uid = $plan['uid'];
+      $assignees[$uid][] = $plan;
+    }
+  }
+  foreach ($assignees as $assignee => $plans) {
+    $count = count($plans);
+    $training_plans = '';
+    foreach ($plans as $plan) {
+      $training_plans .= '<a href="node/' . $plan['nid'] . '">' . $plan['content'] . '</a><br>';
+    }
+    $to[] = $assignee;
+  }
+  if (!empty($to)) {
+    dl_assignments_email_notification($to, $instructions, $duedate, $count, $training_plans);
+    drupal_set_message('Training Plans Assigned.');
+  }
+  else {
+    drupal_set_message('Training Plans have already been assigned.');
+  }
+}
+
+/*
+* This is the form to assign a training plan to a group.
+*/
+function dl_trainingplans_assign_to_group_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //We are going to try to only load options on an ajax request.
+  $groups = array();
+  //$groups = group_autocomplete('','array');
+  $form['tpgroups'] = array (
+    '#type' => 'select',
+    '#title' => t('Assign to Group(s)'),
+    '#options' => $groups,
+    '#multiple' => TRUE,
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'data-placeholder' => 'Select Groups'
+    ),
+    '#weight' => -1,
+  );
+  $form['tgDetails']['tgDuedate'] = array (
+    '#type' => 'date_popup',
+    '#title' => t('Due By [optional]'),
+    '#default_value' => '',
+    '#weight' => 15,
+    '#date_format' => 'Y-m-d',
+    '#date_label_position' => 'within',
+    '#date_year_range' => '0:+1'
+  );
+  $form['tgDetails']['tgInstructions'] = array (
+    '#type' => 'textfield',
+    '#title' => t('Instructions [optional]'),
+    '#weight' => 30,
+  );
+
+  $form['tpgroupcontentid'] = array (
+    '#type' => 'hidden',
+    '#validated' => TRUE,
+    '#attributes' => array(
+      'id' => 'tpgroupcontentid'
+    )
+  );
+  $form['tpsubmit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Assign'),
+    '#weight' => 35,
+  );
+  return $form;
+}
+
+/*
+* Validation the form to assign a training plan to a group.
+*/
+function dl_trainingplans_assign_to_group_form_validate(&$form, &$form_state){
+
+  global $user;
+  $submittedGroups = $form_state['values']['tpgroups'];
+  $tpid = $form_state['values']['tpgroupcontentid'];
+
+  //Does the current user have rights to assign to this person.
+  if(!dl_assignmnets_permssion_to_assign_to_groups($submittedGroups)){
+    form_set_error('groups','An illegal group option was detected. Contact administrator');
+  }
+
+  //confirm this user has is an admin of group the training plan belongs to OR its stock.
+  //find the group of this tp
+  $tp = node_load($tpid);
+  $stock = $tp->field_stock['und'][0]['value'];
+  if(!$stock){
+    $tpgid = $tp->field_organization['und'][0]['target_id'];
+  }
+  //check admin rights
+  if(!$stock && !organization_control_is_group_admin($tpgid,$user->uid)){
+    form_set_error('','There was a permissions error. Please contact the administrator.');
+  }
+
+    //if the due date is set, confirm its in the future
+  if(isset($form_state['values']['tgDuedate']) && $form_state['values']['tgDuedate']!=""){
+    //the date value is not a standard format and can fail in strtotime. We could explode and build a date with mktime but just do this
+    $date = explode("-",$form_state['values']['tgDuedate']);
+    $date = mktime(0,0,0,$date[1],$date[2],$date[0]);
+    if($date<time()){
+      form_set_error('apDuedate','The due date must be in the future.');
+    }
+  }
+
+
+}
+
+/*
+* Submit functionality for the form to assign a training plan to an group.
+*/
+function dl_trainingplans_assign_to_group_form_submit($form, &$form_state){
+  global $user;
+  $submittedGroups = $form_state['values']['tpgroups'];
+  $tpid = $form_state['values']['tpgroupcontentid'];
+  //find the group of this tp
+  $tp = node_load($tpid);
+
+  //an assignment can be a video or an article
+  //if both are set.
+  if(isset($tp->field_related_articles['und']) && isset($tp->field_related_videos['und'])){
+    $contentArr = array_merge($tp->field_related_articles['und'],$tp->field_related_videos['und']);
+  }
+  else{
+    if(isset($tp->field_related_articles['und'])){
+      $contentArr = $tp->field_related_articles['und'];
+    }
+    if(isset($tp->field_related_videos['und'])){
+      $contentArr = $tp->field_related_videos['und'];
+    }
+  }
+  //such a funky format. Lets use something more stardard.
+  $submittedContent = array();
+  foreach($contentArr as $c){
+    $cid = $c['target_id'];
+    $submittedContent[$cid] = $cid;
+  }
+
+  $details['instructions'] = $form_state['values']['tgInstructions'];
+  $details['duedate'] = $form_state['values']['tgDuedate'];
+
+  dl_trainingplans_assign_batch($submittedGroups,$submittedContent,$details);
+  return "";
+}
+
+/*
+ *  Similar to dl_assignments_make_assignment_batch but for groups
+ *  In this function the content is an array.
+ */
+function dl_trainingplans_assign_batch($submittedGroups,$submittedContent,$details=null){
+  //create an operation foreach person.
+  $operations = array();
+  foreach($submittedContent as $contentID){
+    //I do this query here instead of in the batch set because it could be a big loop but its only one query.
+    //If it was in the batch it be a query per person.
+    //explode to users not current assigned.
+    $eligibleUsers = dl_assignments_eligable_users_from_group($submittedGroups,$contentID);
+
+    foreach($eligibleUsers as $eu){
+      $eligibleUsers[$eu] = $eu;
+      // This function will contain code for node creation.
+      $operations[] = array('dl_assignments_make_assignment',array($eu,$contentID,$details,false));
+    }
+  }
+
+  // Start Batch of node creation.
+  $batch = array(
+    'title' => t('Creating Assignments'),
+    'operations' => $operations,
+    'finished' => 'dl_trainingplans_make_assignment_batch_finish',
+    'init_message' => t('Assigning...'),
+    'progress_message' => t('Assigned @current out of @total.'),
+    'error_message' => t('Assignment could not be made.'),
+  );
+  // Set the batch operation.
+  batch_set($batch);
+}
+
+/*
+ * Create an admin page to manage all your training plans.
+*/
+function dl_trainingplans_admin_all_training_plans_page(){
+  //Currently this page is a couple of views embedded as blocks
+  $output['header'] = array(
+    '#type' => 'markup',
+    '#markup' => "<h1>Training Plans  <a class=\"question\" title=\"Learn More\" target=\"_blank\" href=\"/guides/creating-and-assigning-training-plans\" >?</a></h1>",
+    '#weight' => '-25'
+  );
+  return $output;
+}
+/*
+ * Sort the view in a post execute. This view is modified and has a union in dl_trainingplans_views_pre_execute(). That for some reason makes normal sorting not work. 
+*/
+function dl_trainingplans_views_post_execute(&$view) {
+  if($view->name == "admin_training_plans_current_content") {
+    usort($view->result, 'dl_trainingplans_sortByInnerNid');
+  }
+}
+
+function dl_trainingplans_sortByInnerNid($a, $b) {
+  return $a->node_field_data_field_related_videos_nid - $b->node_field_data_field_related_videos_nid;
+}

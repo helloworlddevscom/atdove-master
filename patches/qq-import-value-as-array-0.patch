@@ -1,0 +1,31 @@
+diff --git a/qq_import.module b/qq_import.module
+index 137fa33..5cd5cca 100644
+--- a/qq_import.module
++++ b/qq_import.module
+@@ -106,7 +106,7 @@ function qq_import_feeds_processor_targets_alter(&$targets, $entity_type, $bundl
+  * user has decided to map to and $value contains the value of the feed item
+  * element the user has picked as a source.
+  */
+-function qq_import_field_mapper($source, $entity, $target, $value, $mapping) {
++function qq_import_field_mapper($source, $entity, $target, array $value, $mapping) {
+   if (isset($mapping['target'])) {
+     if ($mapping['target'] == 'long_answer_rubric') {
+       $entity->rubric['value'] = $value;
+@@ -151,7 +151,7 @@ function qq_import_field_mapper($source, $entity, $target, $value, $mapping) {
+   }
+ }
+ 
+-function _qq_import_multichoice_alternative_set($entity, $value, $is_correct) {
++function _qq_import_multichoice_alternative_set($entity, array $value, $is_correct) {
+   // default values
+   $input_format = variable_get('qq_import_multichoice_text_format', filter_default_format());
+   $score_correct = variable_get('qq_import_score_correct', 1);
+@@ -162,7 +162,7 @@ function _qq_import_multichoice_alternative_set($entity, $value, $is_correct) {
+   $entity->choice_multi = variable_get('qq_import_choice_multi', 0);
+   $entity->alternatives[] = array(
+     'answer' => array(
+-      'value' => $value,
++      'value' => $value[0],
+       'format' => $input_format
+     ),
+     'score_if_chosen' => $is_correct ? $score_correct : $score_incorrect,

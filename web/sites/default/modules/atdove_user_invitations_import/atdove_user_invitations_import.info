@@ -1,0 +1,6 @@
+name = Atdove User Invitations Import 
+description = "Import Invites from the old database.."
+package = "atDove Customization"
+core = 7.x
+project = "atdove_user_invitations_import"
+dependencies[] = atdove_user_invitations

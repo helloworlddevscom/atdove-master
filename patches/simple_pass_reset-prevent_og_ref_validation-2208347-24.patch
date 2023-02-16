@@ -1,0 +1,16 @@
+diff --git a/simple_pass_reset.module b/simple_pass_reset.module
+index f2bd844..3e2f9af 100644
+--- a/simple_pass_reset.module
++++ b/simple_pass_reset.module
+@@ -127,6 +127,11 @@ function simple_pass_reset_form_user_profile_form_alter(&$form, &$form_state) {
+       $_SESSION = array();
+     }
+   }
++
++  // Prevent Organic group reference validation ( see https://www.drupal.org/node/2208347#comment-9177131 )
++  if (in_array('og_form_group_reference_validate', $form['#validate'])) {
++    $form['#validate'] = array_diff($form['#validate'], array('og_form_group_reference_validate'));
++  }
+ }
+ 
+ /**

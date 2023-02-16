@@ -1,0 +1,14 @@
+name = Atdove Quiz Certification
+description = "Grants certificates to users who pass quizzes."
+package = Quiz Addon
+core = 7.x
+; Requires menu_build_tree() conditions; available after 7.10.
+; @see http://drupal.org/node/1025582
+dependencies[] = system (>7.10),quiz
+
+; Information added by Drupal.org packaging script on 2014-12-19
+version = "7.0.0"
+core = "7.x"
+project = "quiz-addon"
+datestamp = "1449251852"
+

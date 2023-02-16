@@ -1,0 +1,11 @@
+name = Organization Members Administration
+description = organization-members-administration
+core = 7.x
+package = Features
+dependencies[] = views
+dependencies[] = views_php
+features[ctools][] = views:views_default:3.0
+features[features_api][] = api:2
+features[views_view][] = group_members_administration
+features[views_view][] = organization_members_administration
+features_exclude[dependencies][ctools] = ctools

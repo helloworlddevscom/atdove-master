@@ -1,0 +1,11 @@
+name = Partner Page Content Type
+description = Partner Page Content Type
+core = 7.x
+package = Features
+dependencies[] = node
+features[features_api][] = api:2
+features[field_instance][] = node-partner-field_image
+features[node][] = partner
+features_exclude[dependencies][features] = features
+features_exclude[dependencies][image] = image
+features_exclude[dependencies][video_content_type] = video_content_type

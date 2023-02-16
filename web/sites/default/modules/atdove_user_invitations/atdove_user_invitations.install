@@ -1,0 +1,111 @@
+<?php
+
+/**
+ * Implements hook_schema().
+ */
+function atdove_user_invitations_schema() {
+  $schema['atdove_invites'] = array(
+    'description' => t('Table to track OG invitations from group admins to users'),
+    'fields' => array (
+      'id' => array (
+        'description' => t('The invite\'s delta'),
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'uid' => array (
+        'description' => t('The user id of the invited user'),
+        'type' => 'int',
+        'length' => 11,
+        'not null' => TRUE,
+        'default' => '0',
+      ),
+      'gid' => array (
+        'description' => t('The organization id'),
+        'type' => 'int',
+        'length' => 11,
+        'not null' => TRUE,
+        'default' => '0',
+      ),
+      'email' => array (
+        'description' => t('The email of the invited user'),
+        'type' => 'varchar',
+        'length' => 255 ,
+        'not null' => FALSE,
+        'default' => '',
+      ),
+      'new_user' => array (
+        'description' => t('Flag to indicate if user is new'),
+        'type' => 'int',
+        'size' => 'tiny',
+        'length' => 1,
+        'not null' => FALSE,
+        'default' => NULL,
+      ),
+      'inviter' => array (
+        'description' => t('The user id of the invite creator'),
+        'type' => 'int',
+        'length' => 11,
+        'not null' => TRUE,
+        'default' => '0',
+      ),
+      'active' => array (
+        'description' => t('Flag to indicate if invite is still active'),
+        'type' => 'int',
+        'size' => 'tiny',
+        'length' => 1,
+        'not null' => FALSE,
+        'default' => NULL,
+      ),
+      'accepted' => array (
+        'description' => t('Flag to indicate if user has accepted'),
+        'type' => 'int',
+        'size' => 'tiny',
+        'length' => 1,
+        'not null' => FALSE,
+        'default' => NULL,
+      ),
+      'created' => array(
+        'description' => 'The Unix timestamp when the invitation was created.',
+        'type' => 'int',
+        'not null' => FALSE,
+        'default' => NULL,
+      ),
+      'subgroup' => array (
+        'description' => t('The subgroup id'),
+        'type' => 'int',
+        'length' => 11,
+        'not null' => TRUE,
+        'default' => '0',
+      ),
+    ),
+    'primary key' => array('id'),
+  );
+  return $schema;
+}
+/*
+* We added a column to track with this invitation was created.
+*/
+
+function  atdove_user_invitations_update_7101(){
+  if (db_field_exists('atdove_invites', 'created')) {
+    // Return early if field already created in og_update_7000().
+    return;
+  }
+  $schema = drupal_get_schema('atdove_invites');
+  db_add_field('atdove_invites', 'created', $schema['fields']['created']);
+}
+
+/*
+ * Adds subgroup column to atdove_invites table.
+ */
+function  atdove_user_invitations_update_7102(){
+  if (db_field_exists('atdove_invites', 'subgroup')) {
+    // Return early if field already created in og_update_7000().
+    return;
+  }
+  $schema = drupal_get_schema('atdove_invites');
+  db_add_field('atdove_invites', 'subgroup', $schema['fields']['subgroup']);
+
+  return t('The update added subgroup column to atdove_invites table.');
+}

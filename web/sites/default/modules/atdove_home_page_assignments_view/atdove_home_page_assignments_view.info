@@ -1,0 +1,4 @@
+name = atDove assignment view modifications
+description = "Alterations to assignment view on homepage."
+core = 7.x
+package = "atDove Customization"

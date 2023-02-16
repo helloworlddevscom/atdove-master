@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Flags For Dove feature.
+ */
+
+include_once 'flags_for_dove.features.inc';

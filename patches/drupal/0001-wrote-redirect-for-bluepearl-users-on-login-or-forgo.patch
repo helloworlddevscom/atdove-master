@@ -1,0 +1,42 @@
+From 67acc71c91622e338a802f9023ec90b2e89535d7 Mon Sep 17 00:00:00 2001
+From: gix <gix@new-phyrexia-2.local>
+Date: Fri, 8 Jan 2021 18:18:53 -0500
+Subject: [PATCH] wrote redirect for bluepearl users on login or forgot
+ password
+
+---
+ docroot/modules/user/user.module    | 3 +++
+ docroot/modules/user/user.pages.inc | 3 +++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/docroot/modules/user/user.module b/docroot/modules/user/user.module
+index 2309aa92..7b4fae83 100644
+--- a/docroot/modules/user/user.module
++++ b/docroot/modules/user/user.module
+@@ -2155,6 +2155,9 @@ function user_login_default_validators() {
+  * A FAPI validate handler. Sets an error if supplied username has been blocked.
+  */
+ function user_login_name_validate($form, &$form_state) {
++  if(strpos(strtoupper($form_state['values']['name']), 'BLUEPEARL')) {
++    drupal_goto('https://wayfinder.openathens.net/?return=https%3A%2F%2Fconnect.openathens.net%2Fsaml%2F2%2Fauth%3Fr%3Dhttps%253A%252F%252Fconnect.openathens.net%252Foidc%252Fauth%253Fclient_id%253Ddovelewis.org.oidc-app-v1.66ffd0db-532e-483e-bcab-b00313701f0c%2526response_type%253Dcode%2526scope%253Dopenid%252520email%252520profile%2526redirect_uri%253Dhttps%25253A%25252F%25252Fwww.atdove.org%25252Fopenid-connect%25252Fopenathens%2526state%253DFo_wO08QpZYMmWJQ6lxEeBVDKynZMaeKAXoh2kGfOyo%26d%3Ddovelewis.org%26c%3Da6036e0d-67ba-4090-b1af-548115d893dc%26as%3Dpublished%26aid%3D66ffd0db-532e-483e-bcab-b00313701f0c&oaDomain=dovelewis.org&oaAppId=66ffd0db-532e-483e-bcab-b00313701f0c&entityID=https%3A%2F%2Fatdove.dev.iamanoutiler.com%2Foa%2Fentity');
++  }
+   if (!empty($form_state['values']['name']) && user_is_blocked($form_state['values']['name'])) {
+     // Blocked in user administration.
+     form_set_error('name', t('The username %name has not been activated or is blocked.', array('%name' => $form_state['values']['name'])));
+diff --git a/docroot/modules/user/user.pages.inc b/docroot/modules/user/user.pages.inc
+index 2a1b291b..a7857b8a 100644
+--- a/docroot/modules/user/user.pages.inc
++++ b/docroot/modules/user/user.pages.inc
+@@ -66,6 +66,9 @@ function user_pass() {
+  * @see user_pass_submit()
+  */
+ function user_pass_validate($form, &$form_state) {
++  if(strpos(strtoupper($form_state['values']['name']), 'BLUEPEARL')) {
++    drupal_goto('https://wayfinder.openathens.net/?return=https%3A%2F%2Fconnect.openathens.net%2Fsaml%2F2%2Fauth%3Fr%3Dhttps%253A%252F%252Fconnect.openathens.net%252Foidc%252Fauth%253Fclient_id%253Ddovelewis.org.oidc-app-v1.66ffd0db-532e-483e-bcab-b00313701f0c%2526response_type%253Dcode%2526scope%253Dopenid%252520email%252520profile%2526redirect_uri%253Dhttps%25253A%25252F%25252Fwww.atdove.org%25252Fopenid-connect%25252Fopenathens%2526state%253DFo_wO08QpZYMmWJQ6lxEeBVDKynZMaeKAXoh2kGfOyo%26d%3Ddovelewis.org%26c%3Da6036e0d-67ba-4090-b1af-548115d893dc%26as%3Dpublished%26aid%3D66ffd0db-532e-483e-bcab-b00313701f0c&oaDomain=dovelewis.org&oaAppId=66ffd0db-532e-483e-bcab-b00313701f0c&entityID=https%3A%2F%2Fatdove.dev.iamanoutiler.com%2Foa%2Fentity');
++  }
+   $name = trim($form_state['values']['name']);
+   // Try to load by email.
+   $users = user_load_multiple(array(), array('mail' => $name, 'status' => '1'));
+-- 
+2.17.2 (Apple Git-113)
+

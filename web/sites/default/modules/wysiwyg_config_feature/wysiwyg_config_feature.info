@@ -1,0 +1,14 @@
+name = WYSIWYG Config Feature
+description = WYSIWYG Config Feature
+core = 7.x
+package = Features
+dependencies[] = features
+dependencies[] = filter
+dependencies[] = wysiwyg
+features[features_api][] = api:2
+features[filter][] = filtered_html_content_editor
+features[filter][] = full_html
+features[filter][] = full_html_no_wyswyg
+features[wysiwyg][] = filtered_html_content_editor
+features[wysiwyg][] = full_html
+features[wysiwyg][] = full_html_no_wyswyg

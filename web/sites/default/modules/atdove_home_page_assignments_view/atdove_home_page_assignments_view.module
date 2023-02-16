@@ -1,0 +1,17 @@
+<?php
+
+/**
+ * Implements hook_views_pre_render().
+ *
+ */
+function atdove_home_page_assignments_view_views_pre_render(&$view){
+  // On the assignment view let's do some special styling for 1 and 2 row results
+  if ($view->name == "home_page_assignments_view"){
+    if (count($view->result) == 1){
+      $view->display_handler->set_option('css_class', 'home-page-assignments-view-one-result');
+    }
+    elseif (count($view->result) == 2){
+      $view->display_handler->set_option('css_class', 'home-page-assignments-view-two-result');
+    }
+  }
+}

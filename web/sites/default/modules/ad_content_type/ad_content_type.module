@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Ad feature.
+ */
+
+include_once 'ad_content_type.features.inc';

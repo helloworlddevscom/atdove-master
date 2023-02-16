@@ -1,0 +1,60 @@
+<?php
+
+/**
+ * @file
+ * dl_billing_import.install
+ *
+ * Install, uninstall and update hooks for the DL Billing Import Module
+ */
+
+/**
+ *
+ */
+function dl_billing_import_update_7001() {
+  
+  $schemas['dl_billing_import_cardOnFile'] = array(
+    'description' => 'A table used during import to map billing info',
+    'fields' => array(
+      'biid' => array(
+        'description' => 'Billing import ID.',
+        'type' => 'serial',
+        'size' => 'normal',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'org' => array(
+        'type' => 'varchar',
+        'length' => 254,
+        'not null' => FALSE,
+        'default' => '',
+        'description' => "The org's ID (either UUID or NID, just be consistent.",
+      ),
+      'profileID' => array(
+        'type' => 'varchar',
+        'length' => 254,
+        'not null' => FALSE,
+        'default' => '',
+        'description' => "Org's customerProfileID.",
+      ),
+      'lastTransactionCCInfo' => array(
+        'type' => 'varchar',
+        'length' => 254,
+        'not null' => FALSE,
+        'default' => '',
+        'description' => "Org's last transaction CC info.",
+      ),
+    ),
+    'primary key' => array('biid'),
+  );
+  db_create_table('dl_billing_import_cardOnFile', $schemas['dl_billing_import_cardOnFile']);
+  
+}
+
+function dl_billing_import_update_7002() {
+  $new_field = array(
+    'type' => 'blob',
+    'not null' => TRUE,
+    'size' => 'big',
+  );
+  db_change_field('dl_billing_import_cardOnFile', 'lastTransactionCCInfo', 'lastTransactionCCInfo', $new_field);
+}

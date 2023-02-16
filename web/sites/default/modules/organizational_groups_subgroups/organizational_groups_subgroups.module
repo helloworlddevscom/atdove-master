@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Organizational Groups (subgroups feature.
+ */
+
+include_once 'organizational_groups_subgroups.features.inc';

@@ -1,0 +1,5 @@
+name = atDove Open ID Customizations
+description = Specific customizations to the open id implementation.
+core = 7.x
+package = atDove Customization
+version = "7.x-1.00"

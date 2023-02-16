@@ -1,0 +1,16 @@
+<?php
+
+function atdove_blog_form_form_node_form_alter(&$form, &$form_state, $form_id) {
+  if (arg(1) == 'add' && arg(2) == 'blog') {
+    global $user;
+    $user = user_load($user->uid);
+    // plug image into thumbnail field
+    $form['field_image']['und'][0]['#default_value']['fid'] = $user->field_blog_image['und'][0]['fid'];
+    $form['field_image']['und'][0]['#default_value']['uid'] = $user->field_blog_image['und'][0]['uid'];
+    $form['field_image']['und'][0]['#default_value']['filename'] = $user->field_blog_image['und'][0]['filename'];
+    $form['field_image']['und'][0]['#default_value']['uri'] = $user->field_blog_image['und'][0]['uri'];
+    $form['field_image']['und'][0]['#default_value']['filemime'] = $user->field_blog_image['und'][0]['filemime'];
+    $form['field_image']['und'][0]['#default_value']['filesize'] = $user->field_blog_image['und'][0]['filesize'];
+    $form['field_image']['und'][0]['#default_value']['status'] = $user->field_blog_image['und'][0]['status'];
+  }
+}

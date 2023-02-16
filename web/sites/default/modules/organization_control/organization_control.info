@@ -1,0 +1,5 @@
+name = atDove Organization Control
+description = Provides additional functionality and security for the site concerning organizational creation, size, membership and permissions. 
+core = 7.x
+package = atDove Customization
+version = "7.x-1.00"

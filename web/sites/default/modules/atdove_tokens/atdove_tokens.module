@@ -1,0 +1,47 @@
+<?php
+
+/**
+ * Implements hook_token_info().
+ */
+function atdove_tokens_token_info() {
+  $info = array();
+  // Define a new token type.
+  $info['types']['atdove'] = array(
+    'name' => t('atDove custom tokens'),
+    'description' => t('A token type for atDove customizations.'),
+  );
+  // Define any new tokens.
+  $info['tokens']['atdove']['organization'] = array(
+    'name' => t('Organization'),
+    'description' => t('Organization token for current user.'),
+  );
+  $info['tokens']['atdove']['org-id'] = array(
+    'name' => t('Organization ID'),
+    'description' => t('Organization ID token for current user.'),
+  );
+  return $info;
+}
+
+/**
+ * Implements hook_tokens().
+ */
+function atdove_tokens_tokens($type, $tokens, array $data = array(), array $options = array()) {
+  $replacements = array();
+
+  if ($type == 'atdove') {
+    Global $user;
+    $org = organization_control_orgID($user);
+    foreach ($tokens as $name => $original) {
+      switch ($name) {
+        case 'organization':
+          $replacements[$original] = organization_control_orgName($org);
+          break;
+        case 'org-id':
+          $replacements[$original] = $org;
+          break;
+      }
+    }
+  }
+
+  return $replacements;
+}

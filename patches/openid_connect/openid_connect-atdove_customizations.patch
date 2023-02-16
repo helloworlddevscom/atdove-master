@@ -1,0 +1,387 @@
+diff --git a/includes/openid_connect.admin.inc b/includes/openid_connect.admin.inc
+index a848463..73cd886 100644
+--- a/includes/openid_connect.admin.inc
++++ b/includes/openid_connect.admin.inc
+@@ -55,6 +55,16 @@ function openid_connect_admin_form($form, &$form_state) {
+     );
+   }
+ 
++  $form['openid_connect_connect_existing_users'] = array(
++    '#title' => t('Automatically connect existing users'),
++    '#description' => t('If disabled, authentication will fail for existing email addresses.'),
++    '#type' => 'checkbox',
++    // This is FALSE to reflect the default behaviour of historical installs.
++    // Given the install base there is a high likelyhood that existing sites
++    // are using the module as the single account creation process.
++    '#default_value' => variable_get('openid_connect_connect_existing_users', FALSE),
++  );
++
+   $form['userinfo_mapping'] = array(
+     '#title' => t('User claims mapping'),
+     '#type' => 'fieldset',
+@@ -149,9 +159,10 @@ function openid_connect_admin_form_submit($form, &$form_state) {
+   $default_enabled = array(
+     'openid_connect_always_save_userinfo',
+     'openid_connect_user_pictures',
++    'openid_connect_connect_existing_users',
+   );
+   foreach ($default_enabled as $variable) {
+-    if (isset($form_state['values'][$variable])) {
++    if (!empty($form_state['values'][$variable])) {
+       variable_set($variable, $form_state['values'][$variable]);
+     }
+   }
+diff --git a/includes/openid_connect.forms.inc b/includes/openid_connect.forms.inc
+index 5ecbdbe..9897e9b 100644
+--- a/includes/openid_connect.forms.inc
++++ b/includes/openid_connect.forms.inc
+@@ -45,6 +45,8 @@ function openid_connect_connect_form($form, &$form_state, $account) {
+ 
+   $clients = openid_connect_get_plugins(TRUE);
+ 
++  $read_only = $GLOBALS['user']->uid != $account->uid;
++
+   $form['help'] = array(
+     '#prefix' => '<p class="description">',
+     '#suffix' => '</p>',
+@@ -81,6 +83,7 @@ function openid_connect_connect_form($form, &$form_state, $account) {
+         '#type' => 'submit',
+         '#value' => t('Disconnect from !client_title', array('!client_title' => $client['title'])),
+         '#name' => 'disconnect__' . $client['name'],
++        '#access' => !$read_only,
+       );
+     }
+     else {
+diff --git a/openid_connect.api.php b/openid_connect.api.php
+index 3fd554f..69b8928 100644
+--- a/openid_connect.api.php
++++ b/openid_connect.api.php
+@@ -10,33 +10,6 @@
+  * @{
+  */
+ 
+-/**
+- * Pre authorize hook that runs before a user is authorized.
+- *
+- * @param array $tokens
+- *   ID token and access token that we received as a result of the OpenID
+- *   Connect flow.
+- * @param object $account
+- *   The user account if it exists, false if not.
+- * @param array $userinfo
+- *   The user claims returned by the OpenID Connect provider.
+- * @param string $client_name
+- *   The machine name of the OpenID Connect client plugin.
+- *
+- * @return bool
+- *   TRUE if user should be logged into Drupal. FALSE if not.
+- */
+-function hook_openid_connect_pre_authorize(array $tokens, $account, array $userinfo, $client_name) {
+-  $allowed_users = array('user1@example.com', 'user2@example.com');
+-  // Allow only specific users to log in.
+-  if (in_array($userinfo['email'], $allowed_users)) {
+-    return TRUE;
+-  }
+-
+-  // Block all others.
+-  return FALSE;
+-}
+-
+ /**
+  * Perform an action after a successful authorization.
+  *
+diff --git a/openid_connect.info b/openid_connect.info
+index 65c993f..46c7fc6 100644
+--- a/openid_connect.info
++++ b/openid_connect.info
+@@ -8,3 +8,9 @@ dependencies[] = ctools
+ 
+ files[] = includes/OpenIDConnectClientInterface.class.php
+ files[] = includes/OpenIDConnectClientBase.class.php
++
++; Information added by Drupal.org packaging script on 2021-06-02
++version = "7.x-1.0"
++core = "7.x"
++project = "openid_connect"
++datestamp = "1622644357"
+diff --git a/openid_connect.module b/openid_connect.module
+index 3f32744..7ec4a3e 100644
+--- a/openid_connect.module
++++ b/openid_connect.module
+@@ -342,6 +342,11 @@ function openid_connect_save_destination() {
+   $destination = drupal_get_destination();
+   $destination = $destination['destination'] == 'user/login' ? 'user' : $destination['destination'];
+ 
++  // Override the redirect destination after an authorization.
++  // It is hard coded to the current page which is the login page.
++  // It then redirects to /user. We want to redirect to /
++  $destination = "/";
++
+   // The destination could contain query parameters. Ensure that they are
+   // preserved.
+   $parsed = drupal_parse_url($destination);
+@@ -364,17 +369,16 @@ function openid_connect_save_destination() {
+  *   The user object or FALSE on failure.
+  */
+ function openid_connect_create_user($sub, $userinfo, $client_name) {
+-  $edit = array(
+-    'name' => openid_connect_generate_username($sub, $userinfo, $client_name),
+-    'pass' => user_password(),
+-    'mail' => $userinfo['email'],
+-    'init' => $userinfo['email'],
+-    'status' => 1,
+-    'openid_connect_client' => $client_name,
+-    'openid_connect_sub' => $sub,
++  $openIDdata = array(
++    "openid_connect_client_id" => $userinfo['eduPersonScopedAffiliation'],
++    "openid_connect_employeeID" => $userinfo['employeeID'],
++    "openid_connect_client" => $client_name,
++    "openid_connect_sub" => $sub,
+   );
+ 
+-  return user_save(NULL, $edit);
++  watchdog('openid_connect', 'openid_connect_create_user(): <pre>@sub</pre><pre>@userinfo</pre><pre>@client_name</pre>', array('@sub' => print_r($sub, true), '@userinfo' => print_r($userinfo, true), '@client_name' => print_r($client_name, true)),WATCHDOG_DEBUG);
++  // @TODO: Call atdove_user_invitations.module create_new_user() directly here, skipping email steps.
++  return atdove_user_invitations_invite(array($userinfo['email']), 0,false,$openIDdata,true);
+ }
+ 
+ /**
+@@ -757,22 +761,28 @@ function openid_connect_disconnect_account($account, $client_name, $sub = NULL)
+  * @param array $userinfo
+  *   The user claims as returned from
+  *   OpenIDConnectClientInterface::retrieveUserInfo().
++ * @param string $key
++ *   The user data/info parameter key to use for the sub. If none is
++ *   provided then use 'sub' by default.
+  *
+  * @return string|false
+  *   The sub, or FALSE if there was an error.
+  */
+-function openid_connect_extract_sub($user_data, $userinfo) {
+-  if (!isset($user_data['sub']) && !isset($userinfo['sub'])) {
++function openid_connect_extract_sub($user_data, $userinfo, $key = null) {
++  if (!$key) {
++    $key = 'sub';
++  }
++  if (!isset($user_data[$key]) && !isset($userinfo[$key])) {
+     return FALSE;
+   }
+-  elseif (!isset($user_data['sub'])) {
+-    return $userinfo['sub'];
++  elseif (!isset($user_data[$key])) {
++    return $userinfo[$key];
+   }
+-  elseif (isset($userinfo['sub']) && $user_data['sub'] != $userinfo['sub']) {
++  elseif (isset($userinfo[$key]) && $user_data[$key] != $userinfo[$key]) {
+     return FALSE;
+   }
+   else {
+-    return $user_data['sub'];
++    return $user_data[$key];
+   }
+ }
+ 
+@@ -791,59 +801,82 @@ function openid_connect_extract_sub($user_data, $userinfo) {
+  */
+ function openid_connect_complete_authorization($client, $tokens, &$destination) {
+   if (user_is_logged_in()) {
++    watchdog('openid_connect', 'User already logged in', null, WATCHDOG_ERROR);
+     throw new \RuntimeException('User already logged in');
+   }
+ 
+   $user_data = $client->decodeIdToken($tokens['id_token']);
+   $userinfo = $client->retrieveUserInfo($tokens['access_token']);
+ 
++  watchdog('openid_connect', 'Authorization debug for @mail: <pre>userinfo: @userinfo</pre><pre>user_data: @user_data</pre>', array('@mail' => $userinfo['email'], '@userinfo' => print_r($userinfo, true), '@user_data' => print_r($user_data, true)),WATCHDOG_DEBUG);
++
+   if (empty($userinfo['email'])) {
+     watchdog('openid_connect', 'No e-mail address provided by @provider', array('@provider' => $client->getLabel()), WATCHDOG_ERROR);
+ 
+     return FALSE;
+   }
+ 
+-  $sub = openid_connect_extract_sub($user_data, $userinfo);
++  // Check if a specific subject key is to be used by the client.
++  $subject_key = $client->getSetting('subject_key');
++  $sub = openid_connect_extract_sub($user_data, $userinfo, $subject_key);
+   if (empty($sub)) {
+     watchdog('openid_connect', 'No "sub" found from @provider', array('@provider' => $client->getLabel()), WATCHDOG_ERROR);
+ 
+     return FALSE;
+   }
+ 
+-  $account = openid_connect_user_load_by_sub($sub, $client->getName());
+-  $results = module_invoke_all('openid_connect_pre_authorize', $tokens, $account, $userinfo, $client->getName());
+-
+-  // Deny access if any module returns FALSE.
+-  if (in_array(FALSE, $results, TRUE)) {
+-    watchdog('openid_connect', 'Login denied for @email via pre-authorize hook.', array('@email' => $userinfo['email']), WATCHDOG_ERROR);
++  // Check whether the e-mail address is valid.
++  if (!filter_var($userinfo['email'], FILTER_VALIDATE_EMAIL)) {
++    watchdog('openid_connect', 'E-mail address @mail is not valid.', ['@mail' => $userinfo['email']], WATCHDOG_ERROR);
++    drupal_set_message(t('The e-mail address %mail is not valid.', ['%mail' => $userinfo['email']]), 'error');
+     return FALSE;
+   }
+ 
++  $account = openid_connect_user_load_by_sub($sub, $client->getName());
+   if ($account) {
++    watchdog('openid_connect', 'Existing account for @mail found using "sub": <pre>sub: @sub</pre><pre>userinfo: @userinfo</pre>', array('@mail' => $userinfo['email'], '@sub' => print_r($sub, true), '@userinfo' => print_r($userinfo, true)),WATCHDOG_DEBUG);
+     // An existing account was found. Save user claims.
+     if (variable_get('openid_connect_always_save_userinfo', TRUE)) {
+       openid_connect_save_userinfo($account, $userinfo);
++      watchdog('openid_connect', 'Claims for account @mail saved.', array('@mail' => $userinfo['email']),WATCHDOG_DEBUG);
+     }
+     $account_is_new = FALSE;
+-  }
+-  else {
+-    // Check whether the e-mail address is valid.
+-    if (!filter_var($userinfo['email'], FILTER_VALIDATE_EMAIL)) {
+-      drupal_set_message(t('The e-mail address %mail is not valid.', array('%mail' => $userinfo['email'])), 'error');
+-
+-      return FALSE;
++  // Look for a user by employeeID (they would be previously unmatched to this openID auth)
++  } elseif (dl_openid_unaffilated_user_load($userinfo)) {
++    watchdog('openid_connect', 'Looking for account for @mail based on EmployeeID.', array('@mail' => $userinfo['email']),WATCHDOG_DEBUG);
++    //Load the found account
++    $account = dl_openid_unaffilated_user_load($userinfo);
++    //map this account
++    openid_connect_connect_account($account, $client->getName(), $sub);
++    // An existing account was found. Save user claims.
++    if (variable_get('openid_connect_always_save_userinfo', TRUE)) {
++      openid_connect_save_userinfo($account, $userinfo);
+     }
++    $account_is_new = TRUE;
++    // Look for a user by email
++  } elseif ($account = user_load_by_mail($userinfo['email'])) {
++    watchdog('openid_connect', 'Looking for account for @mail based on e-mail.', array('@mail' => $userinfo['email']),WATCHDOG_DEBUG);
+     // Check whether there is an e-mail address conflict.
+-    if (user_load_by_mail($userinfo['email'])) {
++    if (variable_get('openid_connect_connect_existing_users', FALSE)) {
++      // Connect as the correct user
++      openid_connect_connect_account($account, $client->getName(), $sub);
++      $account_is_new = FALSE;
++    } else {
++      watchdog('openid_connect', 'E-mail address @mail is already taken.', array('@mail' => $userinfo['email']),WATCHDOG_ERROR);
++      // Don't automatically connect, throw an error
+       drupal_set_message(t('The e-mail address %email is already taken.', array('%email' => $userinfo['email'])), 'error');
+-
+       return FALSE;
+     }
+-
++  } else {
++    watchdog('openid_connect', 'Creating new account for @mail.', array('@mail' => $userinfo['email']),WATCHDOG_DEBUG);
+     // Create a new account.
+     $account = openid_connect_create_user($sub, $userinfo, $client->getName());
+     // Reload $account in case it has been altered in a user hook elsewhere.
+     $account = user_load($account->uid);
++    if ($account == false) {
++      watchdog('openid_connect', 'Account for @mail is false. Authorization failed.', array('@mail' => $userinfo['email']),WATCHDOG_ERROR);
++      return false;
++    }
+     openid_connect_save_userinfo($account, $userinfo);
+     $account_is_new = TRUE;
+   }
+@@ -883,7 +916,9 @@ function openid_connect_connect_current_user($client, $tokens) {
+     return FALSE;
+   }
+ 
+-  $sub = openid_connect_extract_sub($user_data, $userinfo);
++  // Check if a specific subject key is to be used by the client.
++  $subject_key = $client->getSetting('subject_key');
++  $sub = openid_connect_extract_sub($user_data, $userinfo, $subject_key);
+   if (empty($sub)) {
+     watchdog('openid_connect', 'No "sub" found from @provider', $provider_param, WATCHDOG_ERROR);
+ 
+@@ -891,13 +926,6 @@ function openid_connect_connect_current_user($client, $tokens) {
+   }
+ 
+   $account = openid_connect_user_load_by_sub($sub, $client->getName());
+-  $results = module_invoke_all('openid_connect_pre_authorize', $tokens, $account, $userinfo, $client->getName());
+-
+-  // Deny access if any module returns FALSE.
+-  if (in_array(FALSE, $results, TRUE)) {
+-    watchdog('openid_connect', 'Login denied for @email via pre-authorize hook.', array('@email' => $userinfo['email']), WATCHDOG_ERROR);
+-    return FALSE;
+-  }
+ 
+   if ($account && $account->uid !== $user->uid) {
+     drupal_set_message(t('Another user is already connected to this @provider account.', $provider_param), 'error');
+diff --git a/plugins/openid_connect_client/openathens/OpenIDConnectClientOpenathens.class.php b/plugins/openid_connect_client/openathens/OpenIDConnectClientOpenathens.class.php
+new file mode 100644
+index 0000000..14878ea
+--- /dev/null
++++ b/plugins/openid_connect_client/openathens/OpenIDConnectClientOpenathens.class.php
+@@ -0,0 +1,52 @@
++<?php
++
++/**
++ * @file
++ * Open Athens OpenID Connect client.
++ */
++
++class OpenIDConnectClientOpenathens extends OpenIDConnectClientBase {
++
++  /**
++   * {@inheritdoc}
++   */
++  public function settingsForm() {
++    $form = parent::settingsForm();
++
++    $form['authorization_endpoint'] = array(
++      '#title' => t('Authorization endpoint'),
++      '#type' => 'textfield',
++      '#default_value' => 'https://connect.openathens.net/oidc/auth',
++    );
++    $form['token_endpoint'] = array(
++      '#title' => t('Token endpoint'),
++      '#type' => 'textfield',
++      '#default_value' => 'https://connect.openathens.net/oidc/token',
++    );
++    $form['userinfo_endpoint'] = array(
++      '#title' => t('UserInfo endpoint'),
++      '#type' => 'textfield',
++      '#default_value' => 'https://connect.openathens.net/oidc/userinfo',
++    );
++    $form['subject_key'] = array(
++      '#title' => t('Subject key'),
++      '#type' => 'radios',
++      '#options' => array('sub' => 'sub', 'eduPersonTargetedID' => 'eduPersonTargetedID'),
++      '#default_value' => $this->getSetting('subject_key', 'eduPersonTargetedID'),
++      '#description' => t('Choose which immutable access token key to use as the subject.'),
++    );
++
++    return $form;
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function getEndpoints() {
++    return array(
++      'authorization' => $this->getSetting('authorization_endpoint'),
++      'token' => $this->getSetting('token_endpoint'),
++      'userinfo' => $this->getSetting('userinfo_endpoint'),
++    );
++  }
++}
+diff --git a/plugins/openid_connect_client/openathens/bluepearl.png b/plugins/openid_connect_client/openathens/bluepearl.png
+new file mode 100644
+index 0000000..f243536
+Binary files /dev/null and b/plugins/openid_connect_client/openathens/bluepearl.png differ
+diff --git a/plugins/openid_connect_client/openathens/openathens.inc b/plugins/openid_connect_client/openathens/openathens.inc
+new file mode 100644
+index 0000000..5daf3c5
+--- /dev/null
++++ b/plugins/openid_connect_client/openathens/openathens.inc
+@@ -0,0 +1,11 @@
++<?php
++
++/**
++ * @file
++ * Provides a OpenID Connect client plugin for Open Athens.
++ */
++
++$plugin = array(
++  'title' => t('Open Athens'),
++  'class' => 'OpenIDConnectClientOpenathens',
++);

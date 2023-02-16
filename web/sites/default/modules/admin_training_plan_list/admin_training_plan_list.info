@@ -1,0 +1,12 @@
+name = Admin Training Plans (list and bulk management)
+description = views around administering training plans (list)
+core = 7.x
+package = Features
+dependencies[] = better_exposed_filters
+dependencies[] = views_php
+features[ctools][] = views:views_default:3.0
+features[features_api][] = api:2
+features[views_view][] = admin_training_plans_all_plans
+features[views_view][] = admin_training_plans_stock_plans
+features_exclude[dependencies][ctools] = ctools
+features_exclude[dependencies][views] = views

@@ -1,0 +1,16 @@
+name = Porter Stemmer
+description = "Improves American English language searching by simplifying related words to their root (conjugations, plurals, ...)."
+core = 7.x
+package = "Search"
+files[] = porterstemmer.module
+files[] = porterstemmer.test
+
+
+
+
+; Information added by drupal.org packaging script on 2013-10-01
+version = "7.x-1.0+1-dev"
+core = "7.x"
+project = "porterstemmer"
+datestamp = "1380623559"
+

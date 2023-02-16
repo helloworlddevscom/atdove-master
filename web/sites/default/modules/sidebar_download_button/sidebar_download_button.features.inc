@@ -1,0 +1,12 @@
+<?php
+/**
+ * @file
+ * sidebar_download_button.features.inc
+ */
+
+/**
+ * Implements hook_views_api().
+ */
+function sidebar_download_button_views_api($module = NULL, $api = NULL) {
+  return array("api" => "3.0");
+}

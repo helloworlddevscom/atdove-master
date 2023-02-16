@@ -1,0 +1,19 @@
+{ "commerce_license_billing_create_recurring_orders" : {
+    "LABEL" : "Create recurring orders based on the initial order",
+    "PLUGIN" : "reaction rule",
+    "WEIGHT" : "10",
+    "OWNER" : "rules",
+    "TAGS" : [ "Commerce License Billing" ],
+    "REQUIRES" : [ "commerce_license_billing", "commerce_payment", "commerce_checkout" ],
+    "ON" : {
+      "commerce_payment_order_paid_in_full" : [],
+      "commerce_checkout_complete" : []
+    },
+    "IF" : [
+      { "commerce_license_billing_order_elligible" : { "commerce_order" : [ "commerce_order" ] } }
+    ],
+    "DO" : [
+      { "commerce_license_billing_create_recurring_orders" : { "commerce_order" : [ "commerce_order" ] } }
+    ]
+  }
+}

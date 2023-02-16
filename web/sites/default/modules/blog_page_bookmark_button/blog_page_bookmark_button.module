@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Blog Page Bookmark Button feature.
+ */
+
+include_once 'blog_page_bookmark_button.features.inc';

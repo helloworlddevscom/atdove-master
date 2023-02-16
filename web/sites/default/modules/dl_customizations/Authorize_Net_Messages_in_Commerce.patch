@@ -1,0 +1,36 @@
+From 463489eb7c0076d595bbc3cc5671174ac16aadf1 Mon Sep 17 00:00:00 2001
+From: maestrojed <maestrojed@highfivefriday.com>
+Date: Thu, 9 Jun 2016 14:46:35 -0700
+Subject: [PATCH] fixes the lack of authorize.net errors messages but require
+ this core hack
+
+---
+ .../modules/commerce_authnet/commerce_authnet.module         | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/docroot/sites/atdove.org/modules/commerce_authnet/commerce_authnet.module b/docroot/sites/atdove.org/modules/commerce_authnet/commerce_authnet.module
+index 46c06e3..8baa2c8 100644
+--- a/docroot/sites/atdove.org/modules/commerce_authnet/commerce_authnet.module
++++ b/docroot/sites/atdove.org/modules/commerce_authnet/commerce_authnet.module
+@@ -679,6 +679,18 @@ function commerce_authnet_cim_submit_new_card_form_submit($payment_method, $pane
+ 
+   // We couldn't store a profile. Abandon ship!
+   if (!$remote_id) {
++    
++    // Outlier / Dove Lewis Modification
++    // Error messages from Authorize.net were not being displayed. I can't find anyway to fix that but to modify this conrtib module with this.     
++    // If the payment failed, display an error and rebuild the form.
++    if( (string) $response->messages->resultCode == "Error" || (string) $response->messages->resultCode == "Declined"){
++      drupal_set_message(t('We received an error processing your order. Please enter your information again or try a different card.'), 'error');
++      // Extract the response data from the XML.
++      $responseArray = explode(',', (string) $response->validationDirectResponseList->string);
++      drupal_set_message(check_plain((string) $responseArray[3]), 'error');
++    }
++    //END Outlier / Dove Lewis Modification. 
++    
+     return FALSE;
+   }
+ 
+-- 
+2.7.4 (Apple Git-66)
+

@@ -1,0 +1,10 @@
+name = Organization Member Profiles - Public
+description = A view of profiles filter to an Organization or Group
+core = 7.x
+package = Features
+dependencies[] = views
+dependencies[] = views_php
+features[ctools][] = views:views_default:3.0
+features[features_api][] = api:2
+features[views_view][] = public_group_members
+features_exclude[dependencies][ctools] = ctools

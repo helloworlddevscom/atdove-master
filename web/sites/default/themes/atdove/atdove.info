@@ -1,0 +1,25 @@
+name = atdove theme
+description = atDove theme based on Framework
+core = 7.x
+engine = phptemplate
+stylesheets[all][] = slick.css
+stylesheets[all][] = slick-theme.css
+stylesheets[all][] = ckeditor-styles.css
+stylesheets[all][] = style.css
+
+scripts[] = js/slick.min.js
+scripts[] = js/user-role-behaviors.js
+scripts[] = js/ga.js
+scripts[] = js/sync-height.js
+scripts[] = js/scripts.js
+
+regions[header]         = Header
+regions[navigation]     = Navigation
+regions[help]           = Help
+regions[content]        = Content
+regions[sidebar_first]  = First Sidebar
+regions[sidebar_second] = Second Sidebar
+regions[comments]       = Comments
+regions[sign_up_cta]    = Sign Up CTA
+regions[suggest_content_modal]    = Suggest Content Modal
+regions[pop_notifications_section]    = Pop Notifications Section

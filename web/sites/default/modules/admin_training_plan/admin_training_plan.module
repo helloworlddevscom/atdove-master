@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Admin Training Plan (single plan details) feature.
+ */
+
+include_once 'admin_training_plan.features.inc';

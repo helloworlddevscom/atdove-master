@@ -1,0 +1,21 @@
+{ "commerce_cardonfile_update_anonymous" : {
+    "LABEL" : "Update user associated with card on file data",
+    "PLUGIN" : "reaction rule",
+    "WEIGHT" : "3",
+    "OWNER" : "rules",
+    "REQUIRES" : [
+      "rules",
+      "commerce_cardonfile",
+      "dl_billing_management",
+      "commerce_checkout"
+    ],
+    "ON" : { "commerce_checkout_complete" : [] },
+    "IF" : [
+      { "data_is" : { "data" : [ "commerce-order:type" ], "value" : "commerce_order" } }
+    ],
+    "DO" : [
+      { "commerce_cardonfile_update_anonymous" : { "commerce_order" : [ "commerce_order" ] } },
+      { "dl_billing_management_set_card_to_charge" : { "user" : [ "commerce-order:uid" ] } }
+    ]
+  }
+}

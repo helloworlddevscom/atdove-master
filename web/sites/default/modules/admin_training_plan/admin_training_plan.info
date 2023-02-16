@@ -1,0 +1,10 @@
+name = Admin Training Plan (single plan details)
+description = views around administering training pland
+core = 7.x
+package = Features
+dependencies[] = views
+dependencies[] = views_php
+features[ctools][] = views:views_default:3.0
+features[features_api][] = api:2
+features[views_view][] = admin_training_plans_current_content
+features_exclude[dependencies][ctools] = ctools

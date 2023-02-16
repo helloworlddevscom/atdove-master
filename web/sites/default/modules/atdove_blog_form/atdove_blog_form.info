@@ -1,0 +1,4 @@
+name = atDove blog form modifications
+description = "Alterations to the blog form."
+core = 7.x
+package = "atDove Customization"

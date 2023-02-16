@@ -1,0 +1,6 @@
+name = atDove User Billing Management
+description = Provides a Dashboard for a user to see information about their current license
+core = 7.x
+package = atDove Customization
+version = "7.x-1.00"
+scripts[] = dl_billing_management.js

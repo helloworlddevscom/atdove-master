@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Bookmarks Page View feature.
+ */
+
+include_once 'bookmarks_page_view.features.inc';

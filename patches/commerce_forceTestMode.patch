@@ -1,0 +1,113 @@
+--- /Users/maestrojed/temp/commerce_authnet.module	2018-08-30 09:49:58.000000000 -0400
++++ /Users/maestrojed/temp/commerce_authnet.module 2*	2018-10-01 15:05:16.000000000 -0400
+@@ -1282,6 +1282,16 @@
+  *   TRUE if the transaction was successful
+  */
+ function commerce_authnet_cim_cardonfile_charge($payment_method, $card_data, $order, $charge = NULL) {
++
++  // Check if global override of testing mode has been turned on
++  // See https://drupal.org/node/2188155
++  $global_testing_override = variable_get('commerce_authnet_force_testmode', FALSE);
++  if ($global_testing_override) {
++    $payment_method['settings']['txn_mode'] = AUTHNET_TXN_MODE_DEVELOPER;
++    $payment_method['settings']['login'] = '';
++    $payment_method['settings']['tran_key'] = '';
++  }
++
+   // Format order total for transaction.
+   if (!isset($charge)) {
+     $wrapper = entity_metadata_wrapper('commerce_order', $order);
+@@ -1294,6 +1304,14 @@
+   // Determine the proper transaction element to use inside the XML.
+   $element_name = commerce_authnet_cim_transaction_element_name($payment_method['settings']['txn_type']);
+
++// See https://drupal.org/node/2188155
++if($payment_method['settings']['txn_mode'] == AUTHNET_TXN_MODE_LIVE_TEST || $payment_method['settings']['txn_mode'] == AUTHNET_TXN_MODE_DEVELOPER){
++  $x_test_request = 'TRUE';
++}
++else{
++  $x_test_request = 'FALSE';
++}
++
+   // Build a data array for the transaction API request.
+   $api_request_data = array(
+     'transaction' => array(
+@@ -1306,7 +1324,7 @@
+         ),
+       ),
+     ),
+-    'extraOptions' => '<![CDATA[x_delim_data=TRUE&amp;x_delim_char=|&amp;x_encap_char="&amp;x_solution_id=A1000009&amp;x_currency_code=' . $charge['currency_code'] . '&amp;x_customer_ip=' . substr(ip_address(), 0, 15) . '&amp;x_email_customer=' . $payment_method['settings']['email_customer'] . ']]>',
++    'extraOptions' => '<![CDATA[x_delim_data=TRUE&amp;x_delim_char=|&amp;x_encap_char="&amp;x_solution_id=A1000009&amp;x_currency_code=' . $charge['currency_code'] . '&amp;x_customer_ip=' . substr(ip_address(), 0, 15) . '&amp;x_email_customer=' . $payment_method['settings']['email_customer'] . '&amp;x_test_request=' . $x_test_request . ']]>',
+   );
+
+   // If we get a response from the API server...
+@@ -1741,6 +1759,16 @@
+  *   The payment method instance array associated with this API request.
+  */
+ function commerce_authnet_aim_request($payment_method, $nvp = array()) {
++
++  // Check if global override of testing mode has been turned on
++  // See https://drupal.org/node/2188155
++  $global_testing_override = variable_get('commerce_authnet_force_testmode', FALSE);
++  if ($global_testing_override) {
++    $payment_method['settings']['txn_mode'] = AUTHNET_TXN_MODE_DEVELOPER;
++    $payment_method['settings']['login'] = '';
++    $payment_method['settings']['tran_key'] = '';
++  }
++
+   // Get the API endpoint URL for the method's transaction mode.
+   $url = commerce_authnet_aim_server_url($payment_method['settings']['txn_mode']);
+
+@@ -1851,6 +1879,14 @@
+  *   The URL to use to submit requests to the Authorize.Net AIM server.
+  */
+ function commerce_authnet_aim_server_url($txn_mode) {
++
++  // Check if global override of testing mode has been turned on
++  // See https://drupal.org/node/2188155
++  $global_testing_override = variable_get('commerce_authnet_force_testmode', FALSE);
++  if ($global_testing_override) {
++    $txn_mode = AUTHNET_TXN_MODE_DEVELOPER;
++  }
++
+   switch ($txn_mode) {
+     case AUTHNET_TXN_MODE_LIVE:
+     case AUTHNET_TXN_MODE_LIVE_TEST:
+@@ -1871,6 +1907,10 @@
+  *   An associative array of data to be turned into a CIM XML API request.
+  */
+ function commerce_authnet_cim_request($payment_method, $request_type, $api_request_data) {
++  // Debug trace - a couple of orders have continous charged at authorize.net but left little trace.
++  // This is to help understand why those orders are failing
++  watchdog('debug',"commerce_authnet_cim_request started api_request_data:@api_request_data",array('@api_request_data'=>$api_request_data));
++
+   // Get the API endpoint URL for the method's transaction mode.
+   $url = commerce_authnet_cim_server_url($payment_method['settings']['txn_mode']);
+
+@@ -2007,7 +2047,10 @@
+     return $response;
+   }
+   else {
+-    return FALSE;
++      // Debug trace - a couple of orders have continous charged at authorize.net but left little trace.
++      // This is to help understand why those orders are failing
++      watchdog('commerce_authnet', 'API request error - Added by Outlier:<pre>@xml</pre>', array('@xml' => "EMPTY"));
++      return FALSE;
+   }
+ }
+
+@@ -2021,6 +2064,14 @@
+  *   The URL to use to submit requests to the Authorize.Net CIM server.
+  */
+ function commerce_authnet_cim_server_url($txn_mode) {
++
++  // Check if global override of testing mode has been turned on
++  // See https://drupal.org/node/2188155
++  $global_testing_override = variable_get('commerce_authnet_force_testmode', FALSE);
++  if ($global_testing_override) {
++    $txn_mode = AUTHNET_TXN_MODE_DEVELOPER;
++  }
++
+   switch ($txn_mode) {
+     case AUTHNET_TXN_MODE_LIVE:
+     case AUTHNET_TXN_MODE_LIVE_TEST:

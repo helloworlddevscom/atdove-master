@@ -1,0 +1,6 @@
+<?php
+
+function dl_openid_update_7100() {
+  $query = db_query("ALTER TABLE `{authmap}` CHANGE `{authname}` `{authname}` VARCHAR( {256} )");
+  return "The size of the `authname` col in the `authmap` table has been increased from 128 to 256";
+}

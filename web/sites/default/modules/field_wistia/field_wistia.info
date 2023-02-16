@@ -1,0 +1,14 @@
+name = Field Wistia
+description = Provides a Wistia widget for fields.
+package = Fields
+core = 7.x
+dependencies[] = field
+dependencies[] = image
+dependencies[] = file
+
+; Information added by Drupal.org packaging script on 2014-11-07
+version = "7.x-1.0-alpha1"
+core = "7.x"
+project = "field_wistia"
+datestamp = "1415323082"
+

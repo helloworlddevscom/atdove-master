@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Training Plan Featurette feature.
+ */
+
+include_once 'training_plan_featurette.features.inc';

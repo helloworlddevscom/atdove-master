@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Subsciption Pages featurette feature.
+ */
+
+include_once 'subsciption_pages_featurette.features.inc';

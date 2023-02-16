@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Highlighted Video View and Block feature.
+ */
+
+include_once 'highlighted_video_view_and_block.features.inc';

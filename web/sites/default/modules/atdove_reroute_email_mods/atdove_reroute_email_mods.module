@@ -1,0 +1,28 @@
+<?php
+
+function atdove_reroute_email_mods_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'reroute_email_settings') {
+    $form['reroute_email_address']['#type'] = 'textarea';
+  }
+}
+
+function atdove_reroute_email_mods_mail_alter(&$message) {
+  $billing_user = 'dlBillingUser';
+  // prevent emails going to dlBilling users
+  $emails = explode(',', $message['to']);
+  if (strpos($emails[0], $billing_user) !== FALSE && count($emails) == 1) {
+    $message['to'] = '';
+  }
+  else {
+    $to_unset = array();
+    for ($i = 0; $i < count($emails); $i++) {
+      if (strpos($emails[$i], $billing_user) !== FALSE) {
+        $to_unset[] = $i;
+      }
+    }
+    foreach ($to_unset as $i) {
+      unset($emails[$i]);
+    }
+    $message['to'] = implode(',', $emails);
+  }
+}

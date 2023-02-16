@@ -1,0 +1,2895 @@
+<?php
+
+
+/**
+ * Implements hook_menu().
+ */
+function atdove_user_invitations_menu() {
+  $items['my-organization/invite-users'] = array(
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('atdove_user_invitations_form'),
+    'access callback' => 'atdove_user_invitations_invite_users_access',
+    //'access arguments' => array(1,2),
+    'title' => 'Invite Users',
+    //'type' => MENU_LOCAL_TASK,
+  );
+  $items['my-account/user-invitation'] = array(
+    'page callback' => 'atdove_user_invitation_accept_decline_page',
+    'page arguments' => array(2,3),
+    'access callback' => 'atdove_user_invitation_accept_decline_access',
+    //I have no idea why these arguments won't pass but I can access them in the callback so that is what I will do
+    'access arguments' => array(3),
+    'title' => 'Accept invitation',
+    //'type' => MENU_LOCAL_TASK,
+  );
+  $items['my-organization/cancel-invitation'] = array(
+    'page callback' => 'atdove_user_invitation_cancel_invite',
+    'page arguments' => array(2,3,4),
+    'access callback' => 'atdove_user_invitations_invite_users_access',
+    //'access arguments' => array(1,2),
+    'title' => 'Cancel Invitation',
+    //'type' => MENU_LOCAL_TASK,
+  );
+  $items['my-organization/resend-invitation'] = array(
+    'page callback' => 'atdove_user_invitation_resend_invite',
+    'page arguments' => array(2,3),
+    'access callback' => 'atdove_user_invitations_invite_users_access',
+    //'access arguments' => array(1,2),
+    'title' => 'Resend Invitation',
+    //'type' => MENU_LOCAL_TASK,
+  );
+  $items['my-organization/import-team-management'] = array(
+    'page callback' => 'atdove_user_invitation_import_team_management_page',
+    'access callback' => 'atdove_user_import_team_management_users_access',
+    'title' => 'Import Team Management',
+  );
+  $items['my-organization/import-team-management/members/remove'] = array(
+    'page callback' => 'atdove_user_invitation_import_team_management_remove_page',
+    'access callback' => 'atdove_user_import_team_management_users_access',
+    'title' => 'Import Team Management - Step 1 - Remove Old Users',
+  );
+  $items['my-organization/import-team-management/members/add'] = array(
+    'page callback' => 'atdove_user_invitation_import_team_management_add_page',
+    'access callback' => 'atdove_user_import_team_management_users_access',
+    'title' => 'Import Team Management - Step 2 - Add New Users and Confirm Remaining Members',
+  );
+  $items['my-organization/import-team-management/members/id_change'] = array(
+    'page callback' => 'atdove_user_invitation_import_team_management_id_change_page',
+    'access callback' => 'atdove_user_import_employee_id_users_access',
+    'title' => 'Import Team Management - Update User IDs',
+  );
+  $items['my-organization/import-employee-id'] = array(
+    'page callback' => 'atdove_user_invitation_import_employee_id_page',
+    'access callback' => 'atdove_user_import_employee_id_users_access',
+    'title' => 'Import Team Management',
+  );
+  $items['user-invitations/testbed'] = array(
+    'title' => 'User Invitation Test Bed',
+    'page callback' => 'atdove_user_invitations_testbed',
+    'access callback' => 'atdove_user_import_team_management_users_access',
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['user-invitations/fix-bp-messup'] = array(
+    'title' => 'Fix BP Import Messup',
+    'page callback' => 'atdove_user_invitations_fixbpmessup',
+    'access callback' => 'atdove_user_import_team_management_users_access',
+    'type' => MENU_NORMAL_ITEM,
+  );
+  return $items;
+}
+
+/*
+* Define the custom VBO actions
+*/
+function atdove_user_invitations_action_info() {
+  $items = array();
+  $items['atdove_user_invitations_resend_emails_action'] = array(
+    'type' => 'entity',
+    'label' => t('Resend Selected Invitations'),
+    'configurable' => FALSE,
+    'vbo_configurable' => FALSE,
+    'triggers' => array('any'),
+    'behavior' => array('views_property'),
+  );
+  return $items;
+}
+
+function atdove_user_invitations_resend_emails_action(&$user, $context) {
+  atdove_user_invitation_resend_invite(0, $user->uid, false);
+}
+
+function atdove_user_invitations_form($form, &$form_state) {
+    $organization_control_organization_size = organization_control_organization_size();
+    $subscriptionInfo = organization_control_subscription_info();
+    $orgID = organization_control_orgID();
+    $importTeamManagementAllowed = atdove_user_invitation_import_team_management_allowed($orgID);
+    $employeeIdAllowed = atdove_user_invitation_employee_id_allowed($orgID);
+
+    $warningMsg = '';
+    if($importTeamManagementAllowed){
+      $warningMsg .= '
+      <p class="user-invite-message">
+        This tool can only invite new members
+      ';
+      if($employeeIdAllowed){
+        $warningMsg.=' and cannot import employee IDs';
+      }
+      $warningMsg.='.
+        You may wish to use the more advanced
+        '.l("Import Team Management","/my-organization/import-team-management").'
+        tool.
+      </p>
+    ';
+    }
+    if($employeeIdAllowed){
+      $warningMsg .= '
+      <p class="user-invite-message">
+        After this import you can
+        '.l("Import Employee IDs","/my-organization/import-employee-id").'
+        .
+      </p>
+    ';
+    }
+    $form['currentInfo'] = array(
+      '#type' => 'markup',
+      '#markup' => '
+        <h1>Send and Manage Invites</h1>
+        <h2>Send Invites<a class="question" title="Learn More" target="_blank" href="/guides/managing-and-inviting-members" >?</a></h2>
+        <h3>Your organization is utilizing '.$organization_control_organization_size.' out of '.$subscriptionInfo['field_total_seats_value'].' available invites.</h3>
+        <p class="user-invite-message">Get started by adding new members to your atdove.org team. Enter one or more email addresses below and click send.<br />
+          <small>(email addresses can be comma, space, or line separated)</small>
+        </p>
+        '.$warningMsg,
+      '#weight' => '-20'
+    );
+
+  $form['user_list'] = array( // Delimited list of emails
+    '#type' => 'textarea',
+    '#size' => 10,
+    '#maxlength' => 300000,
+    '#required' => TRUE, //make this field required
+    '#attributes' => array(
+      'placeholder' => t('example@myclinic.com'),
+    ),
+  );
+  $form['subgroup'] = array(
+    '#type' => 'select',
+    '#title' => 'Add invited team members to a group?<br><small>Don’t have any groups? Create them <a href="/my-organization/organization/manage">here</a>.</small>',
+    '#options' => orggroups_autocomplete('','array'),
+    '#required' => FALSE,
+    '#empty_value' => '',
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Send'),
+  );
+
+  return $form;
+}
+
+function atdove_user_invitations_form_validate($form, &$form_state) {
+  $emails = t(trim($form_state['values']['user_list']));
+  $email_array = preg_split("/[\s,\r\n]+/",$emails); // split on any number of commas, spaces, or returns
+  foreach ($email_array as $email) {
+    if (!(valid_email_address($email))) {
+      form_set_error('user_list', t($email.' is not a valid address'));
+    }
+  }
+  if (!(strlen($form_state['values']['user_list']) > 0)){
+    form_set_error('user_list', t('You must include at least one email address.'));
+  }
+  //confirm the user is an admin
+  global $user;
+  $orgID = organization_control_orgID($user);
+  if(!organization_control_is_group_admin($orgID)){
+    form_set_error('global',t('There was a permissions error.'));
+  }
+  //confirm this addition won't break their seat limit.
+  $currentSize = organization_control_organization_size($user);
+  $subscriptionInfo = organization_control_subscription_info($user);
+  if(empty($subscriptionInfo['field_total_seats_value']) || $subscriptionInfo['field_total_seats_value'] == false){
+    $currentLimit = 0;
+  }else{
+    $currentLimit = $subscriptionInfo['field_total_seats_value'];
+  }
+  $inviteCount = count($email_array);
+  $newSize = $currentSize + $inviteCount;
+  if($newSize > $currentLimit){
+    form_set_error('user_list', t('Adding this many invites would exceed your seat limit.'));
+  }
+  //This is not using batch. I am not sure what the real limit will be. This is just an attempt to keep things sane
+  if($inviteCount>50){
+     form_set_error('user_list', t('You may only import 50 users at a time.'));
+  }
+}
+
+function atdove_user_invitations_form_submit($form, &$form_state) {
+  $subgroup = 0;
+  if (isset($form_state['values']['subgroup'])) {
+    $subgroup = $form_state['values']['subgroup'];
+  }
+  $emails = t(trim($form_state['values']['user_list']));
+  $email_array = preg_split("/[\s,\r\n]+/",$emails); // split on any number of commas, spaces, or returns
+  $form_state['input'] = array(); // clear the form values before rebuilding
+  $form_state['rebuild'] = TRUE;
+  atdove_user_invitations_invite($email_array, $subgroup);
+  drupal_set_message('Invitations sent to '.implode(',',$email_array).'.');
+}
+
+function atdove_user_invitations_invite_users_access() {
+  global $user;
+  $gid = organization_control_orgID($user);
+  // hide menu if the organization is using the employee ID import method of user management
+  if (atdove_user_invitation_employee_id_allowed($gid)){
+    return False;
+  }
+  return organization_control_is_group_admin($gid,$user->uid);
+}
+
+function atdove_user_invitations_invite_users_with_employeeid_access() {
+  global $user;
+  $gid = organization_control_orgID($user);
+  return organization_control_is_group_admin($gid,$user->uid);
+}
+
+/*
+* Access to the powerful Team Management Tool.
+* Certainly limit to group admins
+* There has been talk to limit this to selected orgs too. That is coded and can be configured on an off
+*/
+function atdove_user_import_team_management_users_access() {
+  global $user;
+
+  //This is a hard coded configuration variable for this function. We were debating only allowing
+  //approvedOrgs use this too. If this variable is true, then that restriction is enforced
+  //if it is false then the only check is that the current user is that team's admin.
+  //No futher adjustments in this function should be needed
+  $approvedOrgsOnly = true;
+  $orgApproved = false;
+
+  $orgID = organization_control_orgID($user);
+  if($orgID==0){
+    return false;
+  }
+  $isGroupAdmin = organization_control_is_group_admin($orgID,$user->uid);
+
+  if($approvedOrgsOnly==true){
+    if(atdove_user_invitation_import_team_management_allowed($orgID)){
+      $orgApproved = true;
+    }
+  }
+  else{
+    $orgApproved = true;
+  }
+
+  if(($isGroupAdmin && $orgApproved)  || organization_control_user_has_role('administrator', $user)){
+    return true;
+  }
+  else{
+    return false;
+  }
+}
+
+/*
+* Access to the employeeID import too. This is typically a precurser for orgs to use the
+* Import Team Management tool with Employee IDs.
+*/
+function atdove_user_import_employee_id_users_access(){
+  global $user;
+
+  //This is a hard coded configuration variable for this function. We were debating only allowing
+  //approvedOrgs use this too. If this variable is true, then that restriction is enforced
+  //if it is false then the only check is that the current user is that team's admin.
+  //No futher adjustments in this function should be needed
+  $approvedOrgsOnly = true;
+  $orgApproved = false;
+
+  $orgID = organization_control_orgID($user);
+  if($orgID==0){
+    return false;
+  }
+  $isGroupAdmin = organization_control_is_group_admin($orgID,$user->uid);
+
+
+  if($approvedOrgsOnly==true){
+    if(atdove_user_invitation_employee_id_allowed($orgID)){
+      $orgApproved = true;
+    }
+  }
+  else{
+    $orgApproved = true;
+  }
+
+  if(($isGroupAdmin && $orgApproved) || organization_control_user_has_role('administrator', $user)){
+    return true;
+  }
+  else{
+    return false;
+  }
+
+}
+
+function atdove_user_invitations_invite($emails, $subgroup = 0,$sendEmail = true,$openIDdata = null, $return_user =false) {
+  global $user;
+  if(!is_null($openIDdata)) {
+    $gid = dl_openid_gidFromOpenID($openIDdata['openid_connect_client_id']);
+    if($gid == 0) {
+      drupal_set_message("Your organization could not be found. Please <a href='/contact-us'>Contact Us</a> for assistance</a>.");
+      watchdog("atdove_user_invitations","Failed OpenID Authentication. An organization could not be found for an open id client id ".$openIDdata['openid_connect_client_id'],null,WATCHDOG_INFO);
+      return false;
+    }
+  }
+  else {
+    $gid = organization_control_orgID($user);
+  }
+  foreach ($emails as $email) {
+    // first see if a user exists with this email
+    $query = db_select('users', 'u')
+      ->fields('u', array('uid'))
+      ->condition('mail', $email, '=');
+    $results = $query->execute();
+    $record = $results->fetchAssoc();
+    if ($record) { // user with that email already exists. look up uid, add to invites db
+      //if they are already in this group, skip.
+      $acct = user_load($record['uid']);
+      //if there is openID info, save it now.
+      if($openIDdata) {
+//save this!!
+      }
+      $currGroup = organization_control_orgID($acct);
+      if($currGroup==$gid && isset($acct->access) && $acct->access>0){
+//        drupal_set_message("The email ".$email." is already an active member of your team.",'warning');
+      }
+      else{
+        atdove_user_invitations_add_to_db($record['uid'],$gid,$email,$user->uid,0,$subgroup);
+        $wd_message = "_invite - Invite Created: Existing user " . $email . " was by ". $user->mail . " to join org id " . $gid;
+        if($sendEmail){
+          atdove_user_invitations_send_email($record['uid'], $gid, $email, $user->uid, 0);
+          $wd_message = $wd_message . " email sent";
+        }
+        watchdog("atdove_user_invitations",$wd_message,null,WATCHDOG_INFO);
+      }
+      if($return_user) {
+        return $acct;
+      }
+    }
+    else {// if no user with this email, create user, then add new user to invites db
+      $account = create_new_user($email,$gid,$user->uid,$openIDdata);
+      if ($subgroup) {
+        $values = array(
+          'entity_type' => 'user',
+          'entity' => $account->uid,
+          'field_name' => 'og_user_node1',
+        );
+        og_group('node',$subgroup,$values);
+      }
+      atdove_user_invitations_add_to_db($account->uid,$gid,$email,$user->uid,1,$subgroup);
+      // log the action
+      $wd_message = "_invite - Invite Created: New user " . $email . " was invited by ". $user->mail . " to join org id " . $gid;
+      if($sendEmail){
+        atdove_user_invitations_send_email($account->uid, $gid, $email, $user->uid, 1);
+        $wd_message = $wd_message . " email sent";
+      }
+      watchdog("atdove_user_invitations",$wd_message,null,WATCHDOG_INFO);
+      if($return_user) {
+        return $account;
+      }
+    }
+  }
+}
+
+function atdove_user_invitations_send_email($invitee_id, $gid, $to, $inviter_id, $new) {
+  global $base_url;
+  $site_name = variable_get('site_name', 'Default');
+
+  $invitee = user_load($invitee_id);
+  $invitee_username = $invitee->name;
+  $invitee_first_name = isset($invitee->field_first_name['und'][0]['value']) ? $invitee->field_first_name['und'][0]['value'] : $invitee->name;
+  $invitee_last_name = isset($invitee->field_last_name['und'][0]['value']) ? $invitee->field_last_name['und'][0]['value'] : '';
+
+  $inviter = user_load($inviter_id);
+  $inviter_first_name = isset($inviter->field_first_name['und'][0]['value']) ? $inviter->field_first_name['und'][0]['value'] : $inviter->name;
+  $inviter_last_name = isset($inviter->field_last_name['und'][0]['value']) ? $inviter->field_last_name['und'][0]['value'] : '';
+
+  $group = node_load($gid);
+  $group_name = $group->title;
+
+  $from = 'messages@atdove.org'; // from e-mail address
+  $subject = "You're Invited to Join $group_name's Team on atdove.org";
+  $body = "<p>Hi $invitee_first_name $invitee_last_name,</p><p>You've been invited by $inviter_first_name $inviter_last_name to join the $group_name Team on atdove.org.</p><p>atdove.org is a digital training platform for veterinary professionals like you. See procedural shorts of real patients as they are treated at Portland’s award winning DoveLewis. Follow discussions about customer service, reception, client communication and management topics too.</p>";
+
+  $login_link = "https://www.atdove.org/user/login";
+  $password_reset = user_pass_reset_url($invitee);
+  $currentGroup = organization_control_orgID($invitee,true);
+
+  if($currentGroup>0){
+    $transferWarning = "<p>PLEASE NOTE: Accepting this invitation will transfer your profile from ".organization_control_orgName($currentGroup)." to The $group_name Team. If you do not wish to have your profile transferred to a new team, click the link below and decline this invitation.</p>";
+  }
+
+  if ($invitee->access > 0) {
+    $body .= "<p><a href='".$login_link."'>Scrub in</a> with your existing profile to accept or decline this invitation.</p>";
+    //if the invitee is already in another group, explain transfer.
+    if($currentGroup>0 && $currentGroup!=$gid){
+      $body .= $transferWarning;
+    }
+    $body .= "<p>Forgot your password? That’s okay. Help is here.<br> $password_reset</p>";
+  }
+  else {
+    $body .= "<p>Use this link to scrub in and set up your profile.<br>$password_reset </p>";
+    //some imported users were not auto-placed in a group. They will have to accept the invite.
+    if($currentGroup!=$gid){
+      $body .= "<p>After creating your atdove.org profile you’ll be able to accept or decline joining the $group_name Team.</p>";
+      if($currentGroup>0){
+        $body .= $transferWarning;
+      }
+    }
+  }
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  drupal_mail('atdove_user_invitations', 'invite', $to, language_default(), $params, $from);
+}
+
+function atdove_user_invitations_mail($key, &$message, $params) {
+  switch ($key) {
+    case 'invite':
+      $message['subject'] = $params['subject'];
+      $message['body'] = $params['body'];
+    break;
+    }
+}
+
+function atdove_user_invitation_resend_invite($gid, $uid, $redirect = true) {
+  $user = user_load($uid);
+  $email_array[] = $user->mail;
+  atdove_user_invitations_invite($email_array);
+  $wd_message = "_resend_invite - Invite re-sent: to " . implode(',',$email_array) . " to join org id " . $gid;
+  watchdog("atdove_user_invitations",$wd_message,null,WATCHDOG_INFO);
+  //drupal_set_message('Invitations resent to '.implode(',',$email_array).'.');
+  if ($redirect) {
+    drupal_goto('my-organization/invite-users');
+  }
+
+}
+
+function atdove_user_invitations_add_to_db($uid,$gid,$email,$inviter,$new=1,$subgroup=0) {
+  // first we need to make sure that $uid doesn't already have an invite -- if so, cancel the old one
+  //we will want to maintain data about creation date and new_user status. While below is a loop, it really should find 1 invite max. Regardless we will allow our data to be overwritten thoughout the loop hence maintaining the final rows data. I have no other criteria to choose 'correct' data.
+  //$new_status will be set to new if the previous invite indicated it was a new user.
+      $new_status = $new;
+      $created = time();
+      $accepted = 0;
+
+  $query = db_select('atdove_invites','a')
+    ->fields('a',array('id','new_user','created','accepted'))
+    ->condition('uid',$uid,'=')
+    ->condition('gid',$gid,'=')
+    ->condition('active','1','=');
+  $result = $query->execute();
+  if ($result) {  // if so, mark old invites inactive
+    while($record = $result->fetchAssoc()) {
+      $query = db_update('atdove_invites')
+      ->fields(array('active'=>0))
+      ->condition('id',$record['id'],'=')
+      ->execute();
+      $new_status = $record['new_user'];
+      $created = $record['created'];
+      $accepted = $record['accepted'];
+    }
+  }
+  if (!$subgroup) {
+    $subgroup = 0;
+  }
+
+  // now we can add the new invite
+  $fieldsToUpdate = array(
+    'uid'=>$uid,
+    'gid'=>$gid,
+    'email'=>$email,
+    'new_user'=>$new_status,
+    'inviter'=>$inviter,
+    'active'=>1,
+    'accepted'=>$accepted,
+    'created'=>$created,
+    'subgroup'=>$subgroup,
+  );
+  // force new user to accept group invite. We use $new and not @new_status because if new_status could be true if it was just a resend.
+  if ($new) {
+    $fieldsToUpdate['accepted'] = 1;
+  }else{
+    $fieldsToUpdate['accepted'] = $accepted;
+  }
+  $query = db_insert('atdove_invites')
+  ->fields($fieldsToUpdate);
+  $query->execute();
+}
+
+/**
+ * Implements hook_user_login().
+ */
+function atdove_user_invitations_user_login(&$edit, $account) {
+  // Check if user never logged in.
+  if ($account->access == 0) {
+    $orgID = organization_control_orgID();
+    if($orgID!=false){
+      $query = db_update('atdove_invites')
+        ->condition('uid', $account->uid, '=')
+        ->condition('gid', $orgID, '=')
+        ->condition('accepted', 1, '=')
+        ->fields(array(
+          'active' => 0,
+        ));
+        $results = $query->execute();
+    }
+  }
+}
+
+function create_new_user($email,$gid=null,$creator,$openIDdata = null) {
+  $username = $email;
+  $usernameParts = explode("@",$email);
+  $usernameBase = $usernameParts[0];
+  $usernameInt = "";
+  //confirm the username is unique
+  while(organization_control_username_check_exists($username)==1){
+    $username = $usernameBase.$usernameInt;
+    if($usernameInt == ""){
+      $usernameInt = 1;
+    }else{
+      $usernameInt++;
+    }
+  }
+  //set up the user fields
+  $fields = array(
+    'name' => $username,
+    'mail' => $email,
+    'pass' => user_password(),
+    'status' => 1,
+    'init' => 'email address',
+    'roles' => array(
+      6 => 'subscriber'
+    ),
+  );
+  if(!is_null($openIDdata)) {
+    $fields['openid_connect_client'] = $openIDdata['openid_connect_client'];
+    $fields['openid_connect_sub'] =  $openIDdata['openid_connect_sub'];
+  }
+
+  //the first parameter is left blank so a new user is created
+  $account = user_save('', $fields);
+  // If you want to send the welcome email, use the following code
+
+  // Manually set the password so it appears in the e-mail.
+  $account->password = $fields['pass'];
+
+  //add the user to the org
+  if(!is_null($gid)){
+    $group_values = array(
+      'entity_type' => 'user',
+      'entity' => $account->uid,
+      'field_name' => 'og_user_node',
+      'state' => OG_STATE_ACTIVE,
+    );
+    $og_membership = og_group('node',$gid,$group_values);
+    $og_membership->save();
+  }
+  $account = user_load($account->uid);
+  return $account;
+}
+
+function atdove_user_invitations_block_info() {
+  $blocks['user_invitation_alert'] = array(
+    'info' => t('Alert user of new invitation'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function atdove_user_invitations_block_view($delta = '') {
+  // The $delta parameter tells us which block is being requested.
+  global $user;
+  switch ($delta) {
+    case 'user_invitation_alert':
+      // The subject is displayed at the top of the block. Note that it
+      // should be passed through t() for translation. The title configured
+      // for the block using Drupal UI supercedes this one.
+      $block['subject'] = t('You have an invitation to join a new group!');
+      // The content of the block is typically generated by calling a custom
+      // function.
+      $block['content'] = atdove_user_invitations_block_contents($user);
+      break;
+  }
+  return $block;
+}
+
+function atdove_user_invitations_block_contents($user) {
+
+  $query = db_select('atdove_invites','a')
+    ->condition('uid',$user->uid,'=')
+    ->condition('active','1','=')
+    ->fields('a');
+
+  $results = $query ->execute() ->fetchAssoc();
+
+  if ($results) {
+    $node = node_load($results['gid']);
+
+  $link = '<p>You\'re invited to join</p><h3>'.l($node->title,drupal_get_path_alias('node/'.$node->nid)) . '</h3>';
+  $link_options = array(
+    'items' => array(
+    l('Accept','my-account/user-invitation/accept/'.$results['id']),
+    l('Decline','my-account/user-invitation/decline/'.$results['id'])),
+  );
+  $link .= theme('item_list', $link_options);
+
+  $content = array(
+    '#markup' => $link,
+  );
+  return $content;
+  }
+  else {
+    return '';
+  }
+}
+
+function atdove_user_invitation_accept_decline_access() {
+
+  //grab the invite id from the URL
+  $iid = arg(3);
+
+  if($iid == null){
+    return false;
+  }
+  global $user;
+  $query = db_select('atdove_invites','a');
+  $query->condition('a.id',$iid);
+  $query->fields('a',array('uid'));
+  $results = $query->execute();
+  $r = $results->fetchAssoc();
+  if($r['uid'] == $user->uid ){
+    return TRUE;
+  }
+  return FALSE;
+}
+
+
+function atdove_user_invitation_accept_decline_page($choice,$iid) { // $choice is accept or decline, $iid is the invite id
+  global $user;
+  if ($choice == 'accept') {
+    $query = db_select('atdove_invites','a')
+      ->condition('id',$iid,'=')
+      ->fields('a');
+    $new_group = $query->execute() // $new group contains the invitation fields
+      ->fetchAssoc();
+
+    //if the user is already in the group, show a message and deactivate the invite.
+    if(organization_control_orgID($user) == $new_group['gid']){
+      $new_group_obj = node_load($new_group['gid']);
+      $output['message'] = array(
+        '#type' => 'markup',
+        '#markup' => '<h1>Invites</h1><p>You are and were already a member of '.filter_xss($new_group_obj->title).'.</p>',
+      );
+      atdove_user_invitations_update_invite($iid,TRUE);// Mark the invite as inactive, and accepted
+      return $output;
+    }
+
+    $old_groups = og_get_entity_groups();
+    if (isset($old_groups['node'])) {
+      foreach ($old_groups['node'] as $old_group) {
+        og_ungroup('node',$old_group,'user',$user->uid);
+      }
+    }
+    //add them to their new group (org)
+    og_group('node',$new_group['gid'],array('entity_type'=>'user','entity'=>$user->uid,'field_name'=>'og_user_node'));
+    //add them to their new subgroup
+    if ($new_group['subgroup']) {
+      $_SESSION['bypass_og'] = true;
+      $values = array(
+        'entity_type' => 'user',
+        'entity' => $user->uid,
+        'field_name' => 'og_user_node1',
+      );
+      og_group('node',$new_group['subgroup'],$values);
+      unset($_SESSION['bypass_og']);
+    }
+
+    //give them subscriber access by assigning the "subscriber" role
+    $role = user_role_load_by_name("subscriber");
+    user_multiple_role_edit(array($user->uid), 'add_role', $role->rid);
+
+    atdove_user_invitations_update_invite($iid,TRUE); // Mark the invite as inactive, and accepted
+
+    $new_group_obj = node_load($new_group['gid']);
+    $output['message'] = array(
+      '#type' => 'markup',
+      '#markup' => '<h1>Invites</h1><p>You are now a member of '.filter_xss($new_group_obj->title).'</p>',
+    );
+    $wd_message = "_accept_decline_page - Invite accepted by " . $user->name . " to join " . $new_group_obj->title . " (" . $new_group_obj->nid . ")";
+    watchdog("atdove_user_invitations",$wd_message,null,WATCHDOG_INFO);
+    return $output;
+  }
+  elseif ($choice == 'decline') {
+    atdove_user_invitations_update_invite($iid,FALSE); // Mark the invite as inactive, and accepted
+
+    $output['message'] = array(
+      '#type' => 'markup',
+      '#markup' => '<h1>Invites</h1><p>You have successfully declined the invite.</p>',
+    );
+    $wd_message = "_accept_decline_page - Invite id ". $iid . " was declined by " . $user->name . ".";
+    watchdog("atdove_user_invitations",$wd_message,null,WATCHDOG_INFO);
+    return $output;
+  }
+  else return 'Invalid option';
+}
+
+function atdove_user_invitations_update_invite($iid,$choice) {
+  if (!$choice) {
+    $choice = -1;
+  }
+  $query = db_update('atdove_invites')
+    ->fields(array(
+      'active'=>0,
+      'accepted'=>$choice,
+      ))
+    ->condition('id',$iid,'=')
+    ->execute();
+  return;
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function atdove_user_invitations_views_api() {
+  return array(
+    'api' =>3,
+    'path' => drupal_get_path('module','atdove_user_invitations').'/includes/views',
+  );
+}
+
+function atdove_user_invitation_cancel_invite($gid,$uid,$email = "no-such-email@dovelewis.org") {
+  //check the user has permssions to manage this group.
+  global $user;
+  if(!organization_control_is_group_admin($gid,$user->uid)){
+    drupal_access_denied();
+  }
+  //if it was a new user created by this org and still in this org, them remove them from this org.
+  // remove user from group
+  $query=db_select('atdove_invites','i');
+  $query->fields('i',array('id'));
+  $query->condition('i.uid',$uid);
+  $query->condition('i.gid',$gid);
+  $query->condition('i.active',1);
+  $query->condition('i.new_user',1);
+  $query->join('og_membership','m',"m.entity_type = 'user' AND m.field_name='og_user_node' AND m.state=1 AND m.gid=i.gid AND m.etid = i.uid");
+  $results = $query->execute();
+  if($results->rowCount()>0){
+    $old_groups = og_get_entity_groups();
+    if (isset($old_groups['node'])) {
+      foreach ($old_groups['node'] as $old_group) {
+        og_ungroup('node',$old_group,'user',$uid);
+      }
+    }
+  }
+
+  //mark the invite as inactive.
+  $query=db_update('atdove_invites')
+    ->fields(array(
+      'active' =>0,
+      'accepted' => 0,
+    ))
+    ->condition('gid',$gid,'=')
+    ->condition(db_or()
+        ->condition('email',$email,"=")
+        ->condition('uid',$uid,'=')
+    )->execute();
+  $wd_message = "_invitation_cancel_invite - Invite to uid ". $uid . " was canceled by " . $user->name . " from organization id " . $gid;
+  watchdog("atdove_user_invitations",$wd_message,null,WATCHDOG_INFO);
+  drupal_set_message('Invitation canceled.');
+  drupal_goto('my-organization/invite-users');
+}
+
+/*
+* A page to explain how the team import works and to upload that import file.
+*/
+function atdove_user_invitation_import_team_management_page(){
+  $organization_control_organization_size = organization_control_organization_size();
+  $subscriptionInfo = organization_control_subscription_info();
+  $orgID = organization_control_orgID();
+  $teamImportManagementAllowed = atdove_user_invitation_employee_id_allowed($orgID);
+  $body = "<h1>Import Team Management</h1>";
+  $body .= "
+    <h2>Import Team Member Information</h2>
+    <h3>Your organization is utilizing ".$organization_control_organization_size." out of ".$subscriptionInfo["field_total_seats_value"]." available invites.</h3>
+    <p class='user-invite-message'>
+        This is a powerful management tool that can affect your entire team. Please review these instructions to ensure you understand the changes you will be making.
+      <br />
+      <br />
+        &bull;&nbsp;You may use the form below to upload a .CSV (comma seperated) or .TSV (tab seperated) file.
+      <br />
+        &bull;&nbsp;Individuals in the file that are not currently part of your team, will be sent an invitation to join your team.
+      <br />
+        &bull;&nbsp;Current team members not listed in the file will be removed from your team.
+      <br />
+        &bull;&nbsp;The file must contain the following two columns with these exact headers:
+      <br />
+        &nbsp;&nbsp;&nbsp;&nbsp;";
+  if($teamImportManagementAllowed){
+    $body .= "\"User ID\" and ";
+  }
+  $body .= "\"Email\"<br />";
+  $body .="
+      <br />
+        &bull;&nbsp;Example CSV format:
+      <br />
+        &nbsp;&nbsp;&nbsp;&nbsp;";
+
+  if($teamImportManagementAllowed){
+    $body .= "\"User ID\",";
+  }
+  $body .= "\"Email\"<br />";
+
+  $body .="
+    &nbsp;&nbsp;&nbsp;&nbsp;";
+  if($teamImportManagementAllowed){
+    $body .= "\"887123\",";
+  }
+  $body .= "\"johndoe@example.com\"<br />
+  &nbsp;&nbsp;&nbsp;&nbsp;";
+  if($teamImportManagementAllowed){
+    $body .= "\"776632\",";
+  }
+  $body .= "\"janedoe@example.com\"";
+  if(!$teamImportManagementAllowed){
+    $body .= "<br />*&nbsp;Some Organization import an \"Employee ID\" to help track team members. If you would like this feature added please <a href='/contact-us'>Contact Us</a>.";
+  }
+  $body .= "</p>";
+
+  $output['body'] = array(
+      '#type' => 'markup',
+      '#markup' => $body,
+
+  );
+  $output['import_team_management_files']['#prefix'] = "<div id='import_team_management_form'>";
+  $output['import_team_management_files']['#suffix'] = "</div>";
+  //Current File.
+  $org = node_load($orgID);
+  if(isset($org->field_import_team_file[LANGUAGE_NONE][0]) && $org->field_import_team_file[LANGUAGE_NONE][0]['fid']>0){
+    $currentFile="
+      <p>
+        <h2>Use The Current File:</h2>
+        <strong>".$org->field_import_team_file[LANGUAGE_NONE][0]['filename']."</strong><br /><br />
+        <a class='button-affirmative' href='/my-organization/import-team-management/members/remove'>Continue</a>
+     </p>
+    ";
+    $output['import_team_management_files']['current_file'] = array(
+      '#type' => 'markup',
+      '#markup' => $currentFile,
+    );
+  }
+  $output['import_team_management_files']['import_team_management_form'] = drupal_get_form('atdove_user_invitation_import_team_management_form');
+  $output['import_team_management_files']['import_team_management_form']['#prefix'] = "<h2>Upload a New File</h2>";
+
+  return $output;
+}
+
+/*
+* A form to upload and process a team management import
+*/
+function atdove_user_invitation_import_team_management_form($form, &$form_state){
+  $orgID = organization_control_orgID();
+  $teamImportManagementAllowed = atdove_user_invitation_employee_id_allowed($orgID);
+
+  //ask for the file.
+  $form['csvfile'] = array(
+    '#type' => 'file',
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Upload'),
+  );
+
+  return $form;
+}
+
+/*
+ * validate hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_form_validate($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID();
+  if($orgID==false){
+    form_set_error('file', t("Failed to validate your organization and administraion role."));
+  }else{
+    //process the file
+    $file = file_save_upload('csvfile', array(
+      // Validate extensions.
+      'file_validate_extensions' => array('csv','tsv'),
+    ));
+    if ($file) {
+      // Move the file into the Drupal file system.
+      $directory = 'private://import_team_management';
+      //the file_move() function should create the directory for us but I had some errors in testing so I do it manually.
+      if(!file_exists(drupal_realpath($directory)."/")){
+        file_prepare_directory($directory, FILE_CREATE_DIRECTORY);
+      }
+      $directory = $directory.'/'.$orgID;
+      if(!file_exists(drupal_realpath($directory)."/")){
+        file_prepare_directory($directory, FILE_CREATE_DIRECTORY);
+      }
+      $destination = $directory.'/'.$file->filename;
+      if ($file = file_move($file, $destination)) {
+        // Save the file for use in the submit handler.
+        $form_state['storage']['file'] = $file;
+      }
+      else {
+        form_set_error('file', t("Failed to write the uploaded file to the appropriate storage area"));
+      }
+    }
+    else {
+      form_set_error('file', t('No file was uploaded.'));
+    }
+    //get the subscription limit and current count
+      $subscriptionInfo = organization_control_subscription_info();
+      $organization_control_organization_size = organization_control_organization_size();
+      $organization_limit = $subscriptionInfo["field_total_seats_value"];
+      $orgWithEmployeeID = atdove_user_invitation_employee_id_allowed($orgID);
+
+    //get a current count of members
+    if($orgWithEmployeeID){
+      //first get a list of org members that have ids
+      $queryID = db_select('field_data_field_org_id_for_employee_id','eoid');
+      $queryID->condition('eoid.field_org_id_for_employee_id_value',$orgID);
+      $queryID->join('field_data_field_employee_id','eid','eid.entity_id = eoid.entity_id');
+      $queryID->join('field_data_field_org_employee_ids','ids','ids.field_org_employee_ids_value = eoid.entity_id');
+      $queryID->addField('ids','entity_id','uid');
+      $queryID->addField('eid','field_employee_id_value','employee_id');
+      $resultsID = $queryID->execute();
+      $usersWithIDs = array();
+      while($rID = $resultsID->fetchAssoc()){
+        $usersWithIDs[$rID['uid']] = $rID['employee_id'];
+      }
+
+      $query = db_select("og_membership","m");
+      $query->addField('u', 'mail', 'id');
+      $query->addField('u', 'uid', 'uid');
+      $query->condition('m.gid',$orgID);
+      $query->condition('m.etid',$user->uid,'!=');
+      $query->condition('m.field_name','og_user_node');
+      $query->join('users','u','u.uid = m.etid');
+      $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+      $query->isNull('r.uid');
+      $query->leftjoin('og_users_roles','og',"og.uid = m.etid and og.rid=3 and og.gid='".$orgID."'");
+      $query->isNull('og.uid');
+      $results = $query->execute();
+      $currentMembers = array();
+      $noIDMembers = array();
+      $originalMembers = array();
+      while($r = $results->fetchAssoc()){
+        //by policy, there shouldn't be any employees in a $orgWithEmployeeID org that doesn't have an employeeID.
+        //if they are we will track them and remove them.
+        if(!isset($usersWithIDs[$r['uid']])){
+          $noIDMembers[$r['uid']] = $r['id'];
+        }else{
+          $originalMembers[$usersWithIDs[$r['uid']]] = $r['id'];
+        }
+      }
+    }else{
+      $query = db_select("og_membership","m");
+      $query->addField('u', 'mail', 'id');
+      $query->condition('m.gid',$orgID);
+      $query->condition('m.etid',$user->uid,'!=');
+      $query->condition('m.field_name','og_user_node');
+      $query->join('users','u','u.uid = m.etid');
+      $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+      $query->isNull('r.uid');
+      $query->leftjoin('og_users_roles','og',"og.uid = m.etid and og.rid=3 and og.gid='".$orgID."'");
+      $query->isNull('og.uid');
+      $results = $query->execute();
+      $currentMembers = array();
+      $originalMembers = array();
+      $noIDMembers = array();
+      while($r = $results->fetchAssoc()){
+        $originalMembers[] = $r['id'];
+      }
+    }
+
+    //run through the file and confirm this won't break the limti
+    //parser
+    //go through the submitted data
+    //determine the delimiter
+    switch(substr($file->filename,-3)){
+      case"csv":
+        $delimiter = ",";
+      break;
+      case"tsv":
+        $delimiter = "\t";
+      break;
+      default:
+        $delimiter = ",";
+      break;
+    }
+
+    if($fp = fopen(drupal_realpath($file->uri), 'r')){
+      $linecount = 0;
+      $usersToBeAdded = 0;
+      $usersToBeRemoved = 0;
+      $remainingMembers = $originalMembers;
+      while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+        //we may need to get the count ints from reading the headers
+      if($linecount==0){
+        //find the email col
+        $emailEntryKey = array_search('Email',$entry);
+        if($emailEntryKey===false){
+          form_set_error('file','The "Email" column was not found');
+        }
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $idEntryKey  = array_search('User ID',$entry);
+          if($emailEntryKey===false){
+            form_set_error('file','The "User ID" column was not found');
+          }
+        }
+        //else make it the same as the email col
+        else{
+          $idEntryKey  = $emailEntryKey;
+        }
+      }elseif($linecount==0){
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $emailEntryKey = 1;
+          $idEntryKey  = 0;
+        }
+        //else make it the same as the email col
+        else{
+          $emailEntryKey = 0;
+          $idEntryKey  = 0;
+        }
+      }
+        if($linecount>0){
+          if(in_array($entry[$idEntryKey],$remainingMembers)){
+            $key = array_search($entry[$idEntryKey],$remainingMembers);
+            unset($remainingMembers[$key]);
+          }else{
+            $usersToBeAdded++;
+            $sampleKey = $entry[$emailEntryKey];
+          }
+        }
+        $linecount++;
+      }
+      if(count($remainingMembers)>0){
+        foreach($remainingMembers as $rm){
+          $usersToBeRemoved++;
+        }
+      }
+      //if there were employees without an ID (there should not be) remove them.
+      if($orgWithEmployeeID && count($noIDMembers)>0){
+        foreach($noIDMembers as $nm){
+          $usersToBeRemoved++;
+        }
+      }
+      //total changes
+      $totalAtEnd = $organization_control_organization_size + $usersToBeAdded - $usersToBeRemoved;
+      if($totalAtEnd>$organization_limit){
+        form_set_error('file',"This import would bring your Team Size to $totalAtEnd members which exceeds your license allotment of $organization_limit seats.");
+      }
+      //see if the key looks as it should in generala
+      if(!$orgWithEmployeeID && $usersToBeAdded>0 && !valid_email_address($sampleKey)){
+        form_set_error('file',"The first column ( ".$samplekey." ) does not seem to be emails or your file is not in a proper format.");
+      }
+      //an employeeID could be in so many different formats I choose to skip this validation
+      if($orgWithEmployeeID && $usersToBeAdded>0 && !valid_email_address($sampleKey)){
+        form_set_error('file',"The 2nd column ( ".$samplekey." ) does not seem to be emails or your file is not in a proper format.");
+      }
+    }
+    else{
+      form_set_error('file', t("The file failed to load."));
+    }
+#to-do allow override question
+    if(count($noIDMembers)>0){
+//      form_set_error('file', t("Some of your employees do not currently have Employee IDs. This import would remove them and hence was aborted. You may choose to the option 'Remove any current members without an Employee ID."));
+    }
+    //Provide general change counts - maybe (confirmation step)
+  }
+}
+
+/*
+ * submit hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_form_submit($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID($user);
+  //get the file
+  $file = $form_state['storage']['file'];
+  // We are done with the file, remove it from storage.
+  unset($form_state['storage']['file']);
+  // Save file status.
+  file_save($file);
+  //add the file to the node.
+  $org = node_load($orgID);
+  $org->field_import_team_file[LANGUAGE_NONE][0] = array(
+    'fid' => $file->fid,
+    'display' => 1,
+    'description' => '',
+    );
+  node_save($org);
+}
+
+/*
+* A page to add and update existing memvers from the uploaded import file.
+*/
+function atdove_user_invitation_import_team_management_add_page(){
+  $organization_control_organization_size = organization_control_organization_size();
+  $subscriptionInfo = organization_control_subscription_info();
+  $orgID = organization_control_orgID();
+  $org = node_load($orgID);
+    //if they don't have a file set a message and redirect.
+  if(!isset($org->field_import_team_file[LANGUAGE_NONE][0]) || $org->field_import_team_file[LANGUAGE_NONE][0]['fid']=="" || $org->field_import_team_file[LANGUAGE_NONE][0]['fid']==0){
+    drupal_set_message("You must upload a file before you can proceed with any import steps.",'error');
+    drupal_goto('my-organization/import-team-management');
+  }else{
+    $file = $org->field_import_team_file[LANGUAGE_NONE][0];
+    $teamImportManagementAllowed = atdove_user_invitation_employee_id_allowed($orgID);
+    $body = "<h1>Import Team Management - Add New Members</h1>";
+    $body .= "
+      <h2>Import Team Member Information</h2>
+      <h3>Your organization is utilizing ".$organization_control_organization_size." out of ".$subscriptionInfo["field_total_seats_value"]." available invites.</h3>
+      <p class='user-invite-message'>
+        The current file is: ".$file['filename'].". (<a href='/my-organization/import-team-management'>Change File</a>)<br /><br />
+        Running this import will add any members in this file that are not currently a member. This import will not send welcome emails.<br /><br />
+        Instead, you may <a href='/my-organization/import-team-management/members/remove'>Remove Existing Members</a> or <a href='/my-organization/import-team-management/members/invite'>Send Welcome Emails</a>.
+
+    ";
+    $body .= "</p>";
+    $output['body'] = array(
+        '#type' => 'markup',
+        '#markup' => $body,
+    );
+    $output['import_team_management_form'] = drupal_get_form('atdove_user_invitation_import_team_management_add_form');
+    $output['import_team_management_form']['#prefix'] = "<div id='import_team_management_form'>";
+    $output['import_team_management_form']['#suffix'] = "</div>";
+    return $output;
+  }
+}
+
+
+
+/*
+* A form to upload and process a team management import
+*/
+function atdove_user_invitation_import_team_management_add_form($form, &$form_state){
+  $orgID = organization_control_orgID();
+  $org = node_load($orgID);
+  $file = $org->field_import_team_file[LANGUAGE_NONE][0];
+  $fid = $file['fid'];
+  $form['fid'] = array(
+    '#type' => 'hidden',
+    '#value' => $fid,
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add Members From This File.'),
+  );
+
+  return $form;
+}
+
+/*
+ * validate hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_add_form_validate($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID();
+  if($orgID==false){
+    form_set_error('file', t("Failed to validate your organization and administraion role."));
+  }else{
+
+    //confirm an fid
+    if(!isset($form_state['values']['fid']) || $form_state['values']['fid']=="" || $form_state['values']['fid']==0  ){
+      form_set_error('submit',t("There was an issue identifing your file."));
+    }
+    //process the file
+    $file = file_load($form_state['values']['fid']);
+    if (!$file) {
+      form_set_error('file', t('No file was uploaded.'));
+    }
+    //get the subscription limit and current count
+      $subscriptionInfo = organization_control_subscription_info();
+      $organization_control_organization_size = organization_control_organization_size();
+      $organization_limit = $subscriptionInfo["field_total_seats_value"];
+      $orgWithEmployeeID = atdove_user_invitation_employee_id_allowed($orgID);
+
+    //get a current count of members
+    if($orgWithEmployeeID){
+      //first get a list of org members that have ids
+      $queryID = db_select('field_data_field_org_id_for_employee_id','eoid');
+      $queryID->condition('eoid.field_org_id_for_employee_id_value',$orgID);
+      $queryID->join('field_data_field_employee_id','eid','eid.entity_id = eoid.entity_id');
+      $queryID->join('field_data_field_org_employee_ids','ids','ids.field_org_employee_ids_value = eoid.entity_id');
+      $queryID->addField('ids','entity_id','uid');
+      $queryID->addField('eid','field_employee_id_value','employee_id');
+      $resultsID = $queryID->execute();
+      $usersWithIDs = array();
+      while($rID = $resultsID->fetchAssoc()){
+        $usersWithIDs[$rID['uid']] = $rID['employee_id'];
+      }
+
+      $query = db_select("og_membership","m");
+      $query->addField('u', 'mail', 'id');
+      $query->addField('u', 'uid', 'uid');
+      $query->condition('m.gid',$orgID);
+      $query->condition('m.etid',$user->uid,'!=');
+      $query->condition('m.field_name','og_user_node');
+      $query->join('users','u','u.uid = m.etid');
+      $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+      $query->isNull('r.uid');
+      $query->leftjoin('og_users_roles','og',"og.uid = m.etid and og.rid=3 and og.gid='".$orgID."'");
+      $query->isNull('og.uid');
+      $results = $query->execute();
+      $currentMembers = array();
+      $noIDMembers = array();
+      $originalMembers = array();
+      while($r = $results->fetchAssoc()){
+        //by policy, there shouldn't be any employees in a $orgWithEmployeeID org that doesn't have an employeeID.
+        //if they are we will track them and remove them.
+        if(!isset($usersWithIDs[$r['uid']])){
+          $noIDMembers[$r['uid']] = $r['id'];
+        }else{
+          $originalMembers[$usersWithIDs[$r['uid']]] = $r['id'];
+        }
+      }
+    }else{
+      $query = db_select("og_membership","m");
+      $query->addField('u', 'mail', 'id');
+      $query->condition('m.gid',$orgID);
+      $query->condition('m.etid',$user->uid,'!=');
+      $query->condition('m.field_name','og_user_node');
+      $query->join('users','u','u.uid = m.etid');
+      $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+      $query->isNull('r.uid');
+      $query->leftjoin('og_users_roles','og',"og.uid = m.etid and og.rid=3 and og.gid='".$orgID."'");
+      $query->isNull('og.uid');
+      $results = $query->execute();
+      $currentMembers = array();
+      $originalMembers = array();
+      $noIDMembers = array();
+      while($r = $results->fetchAssoc()){
+        $originalMembers[] = $r['id'];
+      }
+    }
+
+    //run through the csv and confirm this won't break the limti
+    //parser
+    //go through the submitted data
+    //determine the delimiter
+    switch(substr($file->filename,-3)){
+      case"csv":
+        $delimiter = ",";
+      break;
+      case"tsv":
+        $delimiter = "\t";
+      break;
+      default:
+        $delimiter = ",";
+      break;
+    }
+
+    if($fp = fopen(drupal_realpath($file->uri), 'r')){
+      $linecount = 0;
+      $usersToBeAdded = 0;
+      $usersToBeRemoved = 0;
+      $remainingMembers = $originalMembers;
+      while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+        //we may need to get the count ints from reading the headers
+      if($linecount==0){
+        //find the email col
+        $emailEntryKey = array_search('Email',$entry);
+        if($emailEntryKey===false){
+          form_set_error('file','The "Email" column was not found');
+        }
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $idEntryKey  = array_search('User ID',$entry);
+          if($emailEntryKey===false){
+            form_set_error('file','The "User ID" column was not found');
+          }
+        }
+        //else make it the same as the email col
+        else{
+          $idEntryKey  = $emailEntryKey;
+        }
+      }elseif($linecount==0){
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $emailEntryKey = 1;
+          $idEntryKey  = 0;
+        }
+        //else make it the same as the email col
+        else{
+          $emailEntryKey = 0;
+          $idEntryKey  = 0;
+        }
+      }
+        if($linecount>0){
+          if(in_array($entry[$idEntryKey],$remainingMembers)){
+            $key = array_search($entry[$idEntryKey],$remainingMembers);
+            unset($remainingMembers[$key]);
+          }else{
+            $usersToBeAdded++;
+            $sampleKey = $entry[$emailEntryKey];
+          }
+        }
+        $linecount++;
+      }
+      if(count($remainingMembers)>0){
+        foreach($remainingMembers as $rm){
+          $usersToBeRemoved++;
+        }
+      }
+      //if there were employees without an ID (there should not be) remove them.
+      if($orgWithEmployeeID && count($noIDMembers)>0){
+        foreach($noIDMembers as $nm){
+          $usersToBeRemoved++;
+        }
+      }
+      //total changes
+      $totalAtEnd = $organization_control_organization_size + $usersToBeAdded - $usersToBeRemoved;
+      if($totalAtEnd>$organization_limit){
+        form_set_error('file',"This import would bring your Team Size to $totalAtEnd members which exceeds your license allotment of $organization_limit seats.");
+      }
+      //see if the key looks as it should in generala
+      if(!$orgWithEmployeeID && $usersToBeAdded>0 && !valid_email_address($sampleKey)){
+        form_set_error('file',"The first column ( ".$samplekey." ) does not seem to be emails or your CSV is not in a proper format.");
+      }
+      //an employeeID could be in so many different formats I choose to skip this validation
+      if($orgWithEmployeeID && $usersToBeAdded>0 && !valid_email_address($sampleKey)){
+        form_set_error('file',"The 2nd column ( ".$samplekey." ) does not seem to be emails or your CSV is not in a proper format.");
+      }
+    }
+    else{
+      form_set_error('file', t("The file failed to load."));
+    }
+#to-do allow override question
+    if(count($noIDMembers)>0){
+//      form_set_error('file', t("Some of your employees do not currently have Employee IDs. This import would remove them and hence was aborted. You may choose to the option 'Remove any current members without an Employee ID."));
+    }
+    //Provide general change counts - maybe (confirmation step)
+  }
+}
+
+/*
+ * submit hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_add_form_submit($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID($user);
+  //get the file
+  $fid = $form_state['values']['fid'];
+  $file = file_load($fid);
+
+  //See if this is a "orgsWithEmployeeIDs" org.
+  $orgWithEmployeeID = atdove_user_invitation_employee_id_allowed($orgID);
+  //key on employeeID
+  if($orgWithEmployeeID){
+    //first get a list of org members that have ids
+    $queryID = db_select('field_data_field_org_id_for_employee_id','eoid');
+    $queryID->condition('eoid.field_org_id_for_employee_id_value',$orgID);
+    $queryID->join('field_data_field_employee_id','eid','eid.entity_id = eoid.entity_id');
+    $queryID->join('field_data_field_org_employee_ids','ids','ids.field_org_employee_ids_value = eoid.entity_id');
+    $queryID->join('users','u','u.uid = eoid.entity_id');
+    $queryID->addField('ids','entity_id','uid');
+    $queryID->addField('eid','field_employee_id_value','employee_id');
+    $queryID->orderBy('u.mail','asc');
+    $resultsID = $queryID->execute();
+    $usersWithIDs = array();
+    while($rID = $resultsID->fetchAssoc()){
+      $usersWithIDs[$rID['uid']] = $rID['employee_id'];
+    }
+
+    $query = db_select("og_membership","m");
+    $query->addField('u', 'mail', 'id');
+    $query->addField('u', 'uid', 'uid');
+    $query->condition('m.gid',$orgID);
+    $query->condition('m.etid',$user->uid,'!=');
+    $query->condition('m.field_name','og_user_node');
+    $query->join('users','u','u.uid = m.etid');
+    $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+    $query->isNull('r.uid');
+    $results = $query->execute();
+    $currentMembers = array();
+    $noIDMembers = array();
+    $originalMembers = array();
+    while($r = $results->fetchAssoc()){
+      //by policy, there shouldn't be any employees in a $orgWithEmployeeID org that doesn't have an employeeID.
+      //if they are we will track them and remove them.
+      if(!isset($usersWithIDs[$r['uid']])){
+          $noIDMembers[$r['uid']] = $r['id'];
+        }else{
+          $originalMembers[$usersWithIDs[$r['uid']]] = $r['id'];
+        }
+    }
+  }
+  //key on email
+  else{
+    $query = db_select("og_membership","m");
+    $query->addField('u', 'mail', 'id');
+    $query->condition('m.gid',$orgID);
+    $query->condition('m.etid',$user->uid,'!=');
+    $query->condition('m.field_name','og_user_node');
+    $query->join('users','u','u.uid = m.etid');
+    $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+    $query->isNull('r.uid');
+    $query->leftjoin('og_users_roles','og',"og.uid = m.etid and og.rid=3 and og.gid='".$orgID."'");
+    $query->isNull('og.uid');
+    $results = $query->execute();
+    $currentMembers = array();
+    $originalMembers = array();
+    while($r = $results->fetchAssoc()){
+      $originalMembers[$r['id']] = $r['id'];
+    }
+  }
+  //parse the CSV
+    //parser
+    //determine the delimiter
+  switch(substr($file->filename,-3)){
+    case"csv":
+      $delimiter = ",";
+    break;
+    case"tsv":
+      $delimiter = "\t";
+    break;
+    default:
+      $delimiter = ",";
+    break;
+  }
+  $fp = fopen(drupal_realpath($file->uri), 'r');
+  $linecount = 0;
+  $usersToBeAdded = 0;
+  $usersToBeRemoved = 0;
+  $remainingMembers = $originalMembers;
+  $addOperations = array();
+  //create an operation foreach new member.
+  $newMembers = array();
+  if($fp){
+    while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+      //we may need to get the count ints from reading the headers
+      if($linecount==0){
+        //find the email col
+        $emailEntryKey = array_search('Email',$entry);
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $idEntryKey  = array_search('User ID',$entry);
+        }
+        //else make it the same as the email col
+        else{
+          $idEntryKey  = $emailEntryKey;
+        }
+      }elseif($linecount==0){
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $emailEntryKey = 1;
+          $idEntryKey  = 0;
+        }
+        //else make it the same as the email col
+        else{
+          $emailEntryKey = 0;
+          $idEntryKey  = 0;
+        }
+      }
+
+      if($linecount>0){
+
+        if(isset($remainingMembers[$entry[$idEntryKey]]) && $remainingMembers[$entry[$idEntryKey]]!=""){
+//empty conditional because this was adjusted from a previous version and I am trying not to change much.
+        }
+        else{
+          //queue to add.
+          $addOperations[] = array('atdove_user_invitation_import_team_management_add',array($entry[$emailEntryKey],ltrim($entry[$idEntryKey],'0'),$orgWithEmployeeID,null));
+        }
+      }
+      $linecount++;
+    }
+    fclose($fp);
+    // Start Batch of team changes
+    $batch = array(
+      'title' => t('Add Team Changes'),
+      'operations' => $addOperations,
+      'finished' => 'atdove_user_invitation_import_team_management_add_form_submit_batch_finish',
+      'init_message' => t('Implementing...'),
+      'progress_message' => t('Processed @current changes out of @total.'),
+      'error_message' => t('The team member import has errors.'),
+    );
+    watchdog('team_management_import',"A Team Management Import file was processed by %username.",array('%username'=>$user->name));
+    // Set the batch operation.
+    batch_set($batch);
+  }
+}
+
+/*
+ * Finsih hander for team management import batch.
+*/
+function atdove_user_invitation_import_team_management_add_form_submit_batch_finish($success, $results, $operations){
+  if ($success) {
+    // Set a response to the user.
+    drupal_set_message(t('The imported changes have been implemented. Team members were added.'));
+    drupal_set_message(t('<a href="/my-organization/import-team-management/members/invite" class="button-affirmative">Continue and Invite</a> your new members.'));
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    $message = t('An error occurred while processing %error_operation with arguments: @arguments returned %results', array('%error_operation' => $error_operation[0], '@arguments' => print_r($error_operation[1], TRUE),'%results' => print_r($results,true)));
+    drupal_set_message($message, 'error');
+  }
+}
+
+
+/*
+* A page to add and update existing memvers from the uploaded import file.
+*/
+function atdove_user_invitation_import_team_management_remove_page(){
+  $organization_control_organization_size = organization_control_organization_size();
+  $subscriptionInfo = organization_control_subscription_info();
+  $orgID = organization_control_orgID();
+  $org = node_load($orgID);
+  //if they don't have a file set a message and redirect.
+  if(!isset($org->field_import_team_file[LANGUAGE_NONE][0]) || $org->field_import_team_file[LANGUAGE_NONE][0]['fid']=="" || $org->field_import_team_file[LANGUAGE_NONE][0]['fid']==0){
+    drupal_set_message("You must upload a file before you can proceed with any import steps.",'error');
+    drupal_goto('my-organization/import-team-management');
+  }else{
+    $file = $org->field_import_team_file[LANGUAGE_NONE][0];
+    $teamImportManagementAllowed = atdove_user_invitation_employee_id_allowed($orgID);
+    $body = "<h1>Import Team Management - Remove Old Members</h1>";
+    $body .= "
+      <h2>Import Team Member Information</h2>
+      <h3>Your organization is utilizing ".$organization_control_organization_size." out of ".$subscriptionInfo["field_total_seats_value"]." available invites.</h3>
+      <p class='user-invite-message'>
+        The current file is: ".$file['filename'].". (<a href='/my-organization/import-team-management'>Change File</a>)<br /><br />
+        Running this import will remove any current members who are not in this file and are not an administrator.<br /><br />
+        Skip this step and <a href='/my-organization/import-team-management/members/add'>Add New Members</a> or  <a href='/my-organization/import-team-management/members/invite'>Send Welcome Emails</a>.
+    ";
+    $body .= "</p>";
+
+    $output['body'] = array(
+        '#type' => 'markup',
+        '#markup' => $body,
+    );
+    $output['import_team_management_form'] = drupal_get_form('atdove_user_invitation_import_team_management_remove_form');
+    $output['import_team_management_form']['#prefix'] = "<div id='import_team_management_form'>";
+    $output['import_team_management_form']['#suffix'] = "</div>";
+    return $output;
+  }
+}
+
+
+
+/*
+* A form to upload and process a team management import
+*/
+function atdove_user_invitation_import_team_management_remove_form($form, &$form_state){
+  $orgID = organization_control_orgID();
+  $org = node_load($orgID);
+  $file = $org->field_import_team_file[LANGUAGE_NONE][0];
+  $fid = $file['fid'];
+  $form['fid'] = array(
+    '#type' => 'hidden',
+    '#value' => $fid,
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Remove Members Not In This File'),
+  );
+
+  return $form;
+}
+
+/*
+ * validate hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_remove_form_validate($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID();
+  if($orgID==false){
+    form_set_error('file', t("Failed to validate your organization and administraion role."));
+  }
+  //confirm an fid
+  if(!isset($form_state['values']['fid']) || $form_state['values']['fid']=="" || $form_state['values']['fid']==0  ){
+    form_set_error('submit',t("There was an issue identifing your file."));
+  }
+}
+
+/*
+ * submit hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_remove_form_submit($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID($user);
+
+  //get the file
+  $fid = $form_state['values']['fid'];
+  $file = file_load($fid);
+
+  //See if this is a "orgsWithEmployeeIDs" org.
+  $orgWithEmployeeID = atdove_user_invitation_employee_id_allowed($orgID);
+
+  //key on employeeID
+  if($orgWithEmployeeID){
+    //first get a list of users that have an employeeID for this orgid
+    $queryID = db_select('field_data_field_org_id_for_employee_id','eoid');
+    $queryID->condition('eoid.field_org_id_for_employee_id_value',$orgID);
+    $queryID->join('field_data_field_employee_id','eid','eid.entity_id = eoid.entity_id');
+    $queryID->join('field_data_field_org_employee_ids','ids','ids.field_org_employee_ids_value = eoid.entity_id');
+    $queryID->join('users','u','u.uid = ids.entity_id');
+    $queryID->addField('ids','entity_id','uid');
+    $queryID->addField('eid','field_employee_id_value','employee_id');
+    $queryID->orderBy('u.mail','asc');
+    $resultsID = $queryID->execute();
+    $usersWithIDs = array();
+    while($rID = $resultsID->fetchAssoc()){
+      $usersWithIDs[$rID['uid']] = $rID['employee_id'];
+    }
+
+    //then get a list of current org members
+    $query = db_select("og_membership","m");
+    $query->addField('u', 'mail', 'id');
+    $query->addField('u', 'uid', 'uid');
+    $query->condition('m.gid',$orgID);
+    $query->condition('m.etid',$user->uid,'!=');
+    $query->condition('m.field_name','og_user_node');
+    $query->join('users','u','u.uid = m.etid');
+    $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+    $query->isNull('r.uid');
+    $results = $query->execute();
+    $currentMembers = array();
+    $noIDMembers = array();
+    $originalMembers = array();
+    while($r = $results->fetchAssoc()){
+      //by policy, there shouldn't be any employees in a $orgWithEmployeeID org that doesn't have an employeeID.
+      //if they are we will track them and remove them.
+      if(!isset($usersWithIDs[$r['uid']])){
+          $noIDMembers[$r['uid']] = $r['id'];
+        }else{
+          $originalMembers[$usersWithIDs[$r['uid']]] = $r['id'];
+        }
+    }
+
+    //then get a list of org members that have open invites
+    $query = db_select("atdove_invites","i");
+    $query->addField('i', 'email', 'id');
+    $query->addField('i', 'uid', 'uid');
+    $query->condition('i.gid',$orgID);
+    $query->condition('i.uid',$user->uid,'!=');
+    $query->condition('i.active',1);
+    $query->leftjoin('users_roles','r','r.uid = i.uid and r.rid=10');
+    $query->isNull('r.uid');
+    $results = $query->execute();
+    $prevInvitedUsers = array();
+    while($r = $results->fetchAssoc()){
+        $prevInvitedUsers[$r['uid']] = $r['id'];
+    }
+
+  }
+  //key on email
+  else{
+    $query = db_select("og_membership","m");
+    $query->addField('u', 'mail', 'id');
+    $query->condition('m.gid',$orgID);
+    $query->condition('m.etid',$user->uid,'!=');
+    $query->condition('m.field_name','og_user_node');
+    $query->join('users','u','u.uid = m.etid');
+    $query->leftjoin('users_roles','r','r.uid = m.etid and r.rid=10');
+    $query->isNull('r.uid');
+    $query->leftjoin('og_users_roles','og',"og.uid = m.etid and og.rid=3 and og.gid='".$orgID."'");
+    $query->isNull('og.uid');
+    $results = $query->execute();
+    $currentMembers = array();
+    $originalMembers = array();
+    while($r = $results->fetchAssoc()){
+      $originalMembers[$r['id']] = $r['id'];
+    }
+
+    //then get a list of org members that have open invites
+    $query = db_select("atdove_invites","i");
+    $query->addField('i', 'email', 'id');
+    $query->addField('i', 'uid', 'uid');
+    $query->condition('i.gid',$orgID);
+    $query->condition('i.uid',$user->uid,'!=');
+    $query->condition('i.active',1);
+    $query->leftjoin('users_roles','r','r.uid = i.uid and r.rid=10');
+    $query->isNull('r.uid');
+    $results = $query->execute();
+    $prevInvitedUsers = array();
+    while($r = $results->fetchAssoc()){
+        $prevInvitedUsers[$r['uid']] = $r['id'];
+    }
+  }
+  //parse the CSV
+    //parser
+    //determine the delimiter
+  switch(substr($file->filename,-3)){
+    case"csv":
+      $delimiter = ",";
+    break;
+    case"tsv":
+      $delimiter = "\t";
+    break;
+    default:
+      $delimiter = ",";
+    break;
+  }
+  $fp = fopen(drupal_realpath($file->uri), 'r');
+  $linecount = 0;
+  $usersToBeRemoved = 0;
+  $remainingMembers = $originalMembers;
+  $deleteOperations = array();
+  if($fp){
+    while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+      //we may need to get the count ints from reading the headers
+      if($linecount==0){
+        //find the email col
+        $emailEntryKey = array_search('Email',$entry);
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $idEntryKey  = array_search('User ID',$entry);
+        }
+        //else make it the same as the email col
+        else{
+          $idEntryKey  = $emailEntryKey;
+        }
+      }elseif($linecount==0){
+        //if this is an orgWithEmployeeID then find the User ID col
+        if($orgWithEmployeeID){
+          $emailEntryKey = 1;
+          $idEntryKey  = 0;
+        }
+        //else make it the same as the email col
+        else{
+          $emailEntryKey = 0;
+          $idEntryKey  = 0;
+        }
+      }
+      //data lines
+      if($linecount>0){
+        if(isset($remainingMembers[ltrim($entry[$idEntryKey],'0')]) && $remainingMembers[ltrim($entry[$idEntryKey],'0')]!=""){
+          //since they are already a member, remove the from the list that will be removed
+          unset($remainingMembers[ltrim($entry[$idEntryKey],'0')]);
+        }
+        if(in_array($entry[$emailEntryKey],$prevInvitedUsers)){
+          $k = array_search($entry[$emailEntryKey],$prevInvitedUsers);
+          //since they are already invited, remove the from the list that will be removed
+          unset($prevInvitedUsers[$k]);
+        }
+      }
+      $linecount++;
+    }
+    if($remainingMembers && count($remainingMembers)>0){
+      foreach($remainingMembers as $rm){
+        //queue to remove.
+        if($rm!=""){
+          $deleteOperations[] = array('atdove_user_invitation_validate_and_remove_user_from_org',array(array($rm),'email'));
+        }
+      }
+    }
+    if($orgWithEmployeeID && count($noIDMembers)>0){
+      foreach($noIDMembers as $nm){
+        //its possible an account that was missing an employee id was marked for removal but was added by this import. exempt these cases
+        $deleteOperations[] = array('atdove_user_invitation_validate_and_remove_user_from_org',array(array($nm),'email'));
+      }
+    }
+    //remove obsolete invites
+    if($prevInvitedUsers && count($prevInvitedUsers)>0){
+      foreach($prevInvitedUsers as $piuid => $piemail){
+        //queue to remove.
+        if($piuid!=""){
+          $deleteOperations[] = array('atdove_user_invitation_cancel_invites',array(array($piuid)));
+        }
+      }
+    }
+
+    fclose($fp);
+    // Start Batch of team changes
+    if(count($deleteOperations)>0){
+      $batch = array(
+        'title' => t('Remove Team Members'),
+        'operations' => $deleteOperations,
+        'finished' => 'atdove_user_invitation_import_team_management_remove_form_submit_batch_finish',
+        'init_message' => t('Removing...'),
+        'progress_message' => t('Removing @current members out of @total.'),
+        'error_message' => t('The team member import ro remove old members has errors.'),
+      );
+      watchdog('team_management_import',"A Team Management Import file was processed by %username.",array('%username'=>$user->name));
+      // Set the batch operation.
+      batch_set($batch);
+    }else{
+      drupal_set_message("All of your current members are in this file or administrators. No one was removed.");
+    }
+  }
+}
+
+/*
+ * Finsih hander for team management import batch.
+*/
+function atdove_user_invitation_import_team_management_remove_form_submit_batch_finish($success, $results, $operations){
+  if ($success) {
+    // Set a response to the user.
+    drupal_set_message(t('The imported changes have been implemented. Team members were removed.'));
+    drupal_set_message(t('<a href="/my-organization/import-team-management/members/add" class="button-affirmative">Continue</a> and add your new members.'));
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    $message = t('An error occurred while processing %error_operation with arguments: @arguments returned %results', array('%error_operation' => $error_operation[0], '@arguments' => print_r($error_operation[1], TRUE),'%results' => print_r($results,true)));
+    drupal_set_message($message, 'error');
+  }
+}
+
+function atdove_user_invitation_import_team_management_add($emailKey,$idKey,$orgWithEmployeeID,$user=null){
+  if($user==null){
+    global $user;
+  }
+  $orgID = organization_control_orgID($user);
+  //if this is an org that tracks emmployee IDs we need a slightly different batch process
+  if($orgWithEmployeeID && $emailKey!="" && $idKey!=""){
+    atdove_user_invitations_invite(array($emailKey),false,false);
+
+//The following is neccessary to fix a bug with brand new users are not added to the
+//group. The only impact of this is that the user is not avialable for assignments.
+//Currently the only group using the import is not using assignments so this is commented
+//out to save resources.
+    //the previous function saves the user to the group but cache on the user entity means the next function will get an old cachced version and a subsequent save would unsubscribe the user. The solution is to clear cache but that is an expensive operation in this batch process. We will solve this by recreating the field on the user object.
+//     $member = user_load_by_mail($emailKey);
+// watchdog('debug','member load 1',$member);
+//     $member->og_user_node['und'][0]["target_id"]=$orgID;
+// watchdog('debug','member load 2',$member);
+//     user_save($member);
+
+    atdove_user_invitations_add_employeeID(array($idKey=>$emailKey),false);
+  }
+  elseif($emailKey!=""){
+    atdove_user_invitations_invite(array($emailKey),false,false);
+  }
+}
+
+/*
+ * Validate all users are in this group and managed by the current user. Then sends on to
+ * Removes a user from an organiztion and all subgroups.
+*/
+function atdove_user_invitation_validate_and_remove_user_from_org($ids = array(),$idType='uid'){
+  //if the idType was email, convert to uid.
+  if($idType == "email"){
+    $uids = array();
+    $query = db_select('users','u');
+    $query->condition('u.mail',$ids,"IN");
+    $query->fields('u',array('uid'));
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      $uids[$r['uid']] = $r['uid'];
+    }
+    //override the emails with the uids
+    $ids = $uids;
+  }
+  //get the current user
+  global $user;
+  //and their orgID
+  $orgID = organization_control_orgID($user);
+  //confirm adminship
+  if(!organization_control_is_group_admin($orgID,$user->uid)){
+    watchdog('team_management_import',"A Team Management Import file was attempted by %username but they are not an admin of the group %gid.",array('%username'=>$user->name,'%gid'=>$gid));
+    return false;
+  }
+  //confirm each user is currentingly in this group, remove any that are not and notify watchdog.
+  $query = db_select('og_membership','m');
+  $query->condition('m.gid',$orgID);
+  $query->condition('m.etid',$ids);
+  $query->condition('m.field_name','og_user_node');
+  $query->fields('m',array('etid'));
+  $results = $query->execute();
+  while($r = $results->fetchAssoc()){
+    $members[$r['etid']] = $r['etid'];
+  }
+  foreach($ids as $idk => $id){
+    if(!in_array($id,$members)){
+      watchdog('team_management_import',"A Team Management Import file was attempted by %username. They tried to remove %name but %name is not a current member of the group %gid.",array('%username'=>$user->name,'%gid'=>$gid,'%name'=>$id));
+      unset($ids[$idk]);
+    }
+  }
+  //don't remove admins
+  foreach($ids as $idk => $id){
+    if(organization_control_is_group_admin($orgID,$id)){
+      watchdog('team_management_import',"A Team Management Import file was attempted by %username. They tried to remove %name but %name is an admin of the group %gid.",array('%username'=>$user->name,'%gid'=>$orgID,'%name'=>$id));
+      unset($ids[$idk]);
+    }
+  }
+  atdove_user_invitation_remove_user_from_org($ids);
+}
+
+
+/*
+ * Removes a user from an organiztion and all subgroups.
+ * Users are only to be in one organization at a time, So removing them from their current org is the same as removing them from all their groups.
+ * Ideally this function would like UIDs but to make it work well as a batch funtion I also allows emails
+*/
+function atdove_user_invitation_remove_user_from_org($ids = array(),$idType='uid'){
+  //if the idType was email, convert to uid.
+  if($idType == "email"){
+    $uids = array();
+    $query = db_select('users','u');
+    $query->condition('u.mail',$ids,"IN");
+    $query->fields('u',array('uid'));
+    $results = $query->execute();
+    while($r = $results->fetchAssoc()){
+      $uids[$r['uid']] = $r['uid'];
+    }
+    //override the emails with the uids
+    $ids = $uids;
+  }
+  foreach($ids as $uid){
+    //look up all the groups
+    $query = db_select('og_membership','m');
+    $query->condition('m.etid',$uid);
+    $or = db_or();
+    $or->condition('m.field_name','og_user_node');
+    $or->condition('m.field_name','og_user_node1');
+    $query->condition($or);
+    $query->fields('m',array('gid'));
+    $results = $query->execute();
+    $groups = array();
+    while($r = $results->fetchAssoc()){
+      $groups[$r['gid']] = $r['gid'];
+      $mem = og_ungroup('node',$r['gid'],'user',$uid);
+      //There is a bug were the last user is remove and readded. I can not figure out why.
+      //To fix this not only will we use og_ungroup() we will also remove the fields from the user.
+      $member = user_load($uid);
+      unset($member->og_user_node);
+      unset($member->og_user_node1);
+      user_save($member);
+      watchdog('remove_user','atdove_user_invitation_remove_user_from_org remove from group',array('uid'=>$uid,'gid'=>$r['gid']));
+    }
+  }
+  //also remove any employee IDs for this org
+  foreach($ids as $uid){
+    //find any employee ID for this user and org and remove them.
+    $queryID = db_select('field_data_field_org_id_for_employee_id','eoid');
+    $queryID->condition('eoid.field_org_id_for_employee_id_value',organization_control_orgID());
+    $queryID->join('field_data_field_org_employee_ids','ids',"ids.field_org_employee_ids_value = eoid.entity_id and ids.entity_id='".$uid."'");
+    $queryID->addField('eoid','entity_id','fcid');
+    $resultsID = $queryID->execute();
+    $fcids = array();
+    while($rID = $resultsID->fetchAssoc()){
+      entity_delete_multiple('field_collection_item', array($rID['fcid']) ); // Delete field collection item.
+      watchdog('remove_user','atdove_user_invitation_remove_user_from_org remove employee ID',array('uid'=>$uid,'fcid'=>$rID['fcid']));
+    }
+  }
+}
+
+/*
+ * Given an employeeID and email address, update that user with that email address
+ * $users - $users[$employeeID]=> $employeeNewEmail;
+*/
+function atdove_user_invitations_update_email_address($users){
+  foreach($users as $uid => $newaddress){
+    if($member = user_load($uid)){
+      //confirm the username is unique
+      $username = $newaddress;
+      $usernameParts = explode("@",$newaddress);
+      $usernameBase = $usernameParts[0];
+      $usernameInt = "";
+
+      while(organization_control_username_check_exists($username)==1){
+        $username = $usernameBase.$usernameInt;
+        if($usernameInt == ""){
+          $usernameInt = 1;
+        }else{
+          $usernameInt++;
+        }
+      }
+      $member->name = $username;
+      $member->mail = $newaddress;
+      user_save($member);
+    }
+    watchdog('team_management_import','atdove_user_invitations_update_email_address uid',$uid);
+    watchdog('team_management_import','atdove_user_invitations_update_email_address newaddress',$newaddress);
+  }
+}
+
+/*
+ * This function adds the employee ID to the profile.
+*/
+function atdove_user_invitations_add_employeeID($members){
+  foreach($members as $employeeID => $email){
+    $email = trim($email);
+    $orgID = organization_control_orgID();
+    //find the user by email
+    $member = user_load_by_mail($email);
+    //if a user was not found return a error message but don't break the loop
+    if($member == false){
+      drupal_set_message("A user with the email \"$email\" could not be loaded.",'error');
+      watchdog('team_management_import',"An invite that was attempted via atdove_user_invitations_add_employeeID() could not find a user with the given email.",array("employeeID"=>$employeeID,"email"=>$email));
+      return "";
+    }
+
+    //confirm this user doesn't already have this employee id
+    $idExists = false;
+    if(isset($member->field_org_employee_ids['und'])){
+      foreach($member->field_org_employee_ids['und'] as $existingEmployeeID){
+        $eeidfcid = $existingEmployeeID['value'];
+        $eeidfc = entity_load('field_collection_item', array($eeidfcid));
+        if($eeidfc[$eeidfcid]->field_org_id_for_employee_id['und'][0]['value']==$orgID && $eeidfc[$eeidfcid]->field_employee_id['und'][0]['value']==$employeeID){
+          $idExists = true;
+        }
+      }
+    }
+    if($idExists==false){
+      //add the employeeID
+      $eidfc = entity_create('field_collection_item', array('field_name' => 'field_org_employee_ids'));
+      $eidfc->setHostEntity('user', $member);
+      $eidfc->field_employee_id[LANGUAGE_NONE][]['value'] = $employeeID;
+      $eidfc->field_org_id_for_employee_id[LANGUAGE_NONE][]['value'] = $orgID;
+      $eidfc->save();
+      watchdog('team_management_import','atdove_user_invitations_add_employeeID employee id added',array('employeeID'=>"$employeeID",'email'=>"$email"));
+    }
+  }
+}
+/*
+* See if an organiztion is allowed to use the team management tool
+*/
+function atdove_user_invitation_import_team_management_allowed($orgID){
+  $org = node_load($orgID);
+  if($org->type!='organization'){
+    return false;
+  }
+  if(isset($org->field_allow_import_team_manageme['und'][0]['value']) && $org->field_allow_import_team_manageme['und'][0]['value']==1){
+    return true;
+  }
+    return false;
+}
+
+/*
+* A form to add an org to those allowed to import team management
+*/
+function atdove_user_invitation_import_team_management_allowed_orgs_form($form,&$form_state,$orgID){
+  $orgAllowed = atdove_user_invitation_import_team_management_allowed($orgID);
+  $form['Label'] = array(
+    '#type' => 'markup',
+    '#weight' => '10',
+    '#markup' => "<h3>Team Management Import Tool Access</h3>"
+  );
+  $form['action'] = array(
+    '#type' => 'hidden',
+  );
+  $form['orgID'] = array(
+    '#type' => 'hidden',
+    '#value' => $orgID,
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#weight' => '20',
+  );
+
+  if($orgAllowed){
+    $form['action']['#value'] = "revoke";
+    $form['submit_button']['#value'] = "Revoke Access to the Team Mangement Import Tools";
+  }
+  else{
+    $form['action']['#value'] = 'grant';
+    $form['submit_button']['#value'] = "Grant Access to the Team Mangement Import Tools";
+  }
+  return $form;
+}
+
+/*
+ * validate hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_allowed_orgs_form_validate($form, &$form_state) {
+  //confirm we have a proper action
+  if(!isset($form_state['values']['action']) || $form_state['values']['action']==""){
+    form_set_error('action','A proper action was not performed');
+  }
+  //confirm we have an orgID
+  if(!isset($form_state['values']['orgID']) || $form_state['values']['orgID']==""){
+    form_set_error('orgID','A proper orgID was not found');
+  }
+}
+
+/*
+ * submit hander for the import team management feature
+*/
+function atdove_user_invitation_import_team_management_allowed_orgs_form_submit($form, &$form_state) {
+  switch($form_state['values']['action']){
+    //if grant
+    case"grant";
+      atdove_user_invitation_import_team_management_allowed_orgs_grant($form_state['values']['orgID']);
+      drupal_set_message('Access Granted to the Import Team Management Tool');
+    break;
+    //if revoke
+    case"revoke";
+      atdove_user_invitation_import_team_management_allowed_orgs_revoke($form_state['values']['orgID']);
+      drupal_set_message('Access to the Import Team Management Tool was Revoked');
+    break;
+  }
+}
+
+function atdove_user_invitation_import_team_management_allowed_orgs_grant($orgID){
+  $org = node_load($orgID);
+  if($org->type!='organization'){
+    return false;
+  }
+    $org->field_allow_import_team_manageme['und'][0]['value'] = 1;
+    if(node_save($org)){
+      return true;
+    }
+    return false;
+}
+
+function atdove_user_invitation_import_team_management_allowed_orgs_revoke($orgID){
+  $org = node_load($orgID);
+  if($org->type!='organization'){
+    return false;
+  }
+    $org->field_allow_import_team_manageme['und'][0]['value'] = 0;
+    if(node_save($org)){
+      return true;
+    }
+    return false;
+}
+
+function atdove_user_invitation_employee_id_allowed($orgID){
+  if (!$orgID){
+    return false;
+  }
+  $org = node_load($orgID);
+  if($org->type!='organization'){
+    return false;
+  }
+  if(isset($org->field_allow_employeeid['und'][0]['value']) && $org->field_allow_employeeid['und'][0]['value']==1){
+    return true;
+  }
+    return false;
+}
+
+/*
+* A form to add an org to those allowed to import team management
+*/
+function atdove_user_invitation_employee_id_allowed_orgs_form($form, &$form_state,$orgID){
+  $orgAllowed = atdove_user_invitation_employee_id_allowed($orgID);
+  $form['Label'] = array(
+    '#type' => 'markup',
+    '#weight' => '10',
+    '#markup' => "<h3>Track Employee IDs Access</h3>"
+  );
+  $form['action'] = array(
+    '#type' => 'hidden',
+  );
+  $form['orgID'] = array(
+    '#type' => 'hidden',
+    '#value' => $orgID,
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#weight' => '20',
+  );
+  if($orgAllowed){
+    $form['action']['#value'] = "revoke";
+    $form['submit_button']['#value'] = "Revoke Access to Track Employee IDs";
+  }
+  else{
+    $form['action']['#value'] = 'grant';
+    $form['submit_button']['#value'] = "Grant Access to Track Employee IDs";
+  }
+  return $form;
+
+}
+/*
+ * validate hander for the import team management feature
+*/
+function atdove_user_invitation_employee_id_allowed_orgs_form_validate($form, &$form_state) {
+  //confirm we have a proper action
+  if(!isset($form_state['values']['action']) || $form_state['values']['action']==""){
+    form_set_error('action','A proper action was not performed');
+  }
+  //confirm we have an orgID
+  if(!isset($form_state['values']['orgID']) || $form_state['values']['orgID']==""){
+    form_set_error('orgID','A proper orgID was not found');
+  }
+}
+/*
+ * submit hander for the import team management feature
+*/
+function atdove_user_invitation_employee_id_allowed_orgs_form_submit($form, &$form_state) {
+  switch($form_state['values']['action']){
+    //if grant
+    case"grant";
+      atdove_user_invitation_employe_id_allowed_orgs_grant($form_state['values']['orgID']);
+      drupal_set_message('Access Granted to the Track Employee ID Tool');
+    break;
+    //if revoke
+    case"revoke";
+      atdove_user_invitation_employe_id_allowed_orgs_revoke($form_state['values']['orgID']);
+      drupal_set_message('Access to the Track Employee ID was Revoked');
+    break;
+  }
+}
+
+function atdove_user_invitation_employe_id_allowed_orgs_grant($orgID){
+  $org = node_load($orgID);
+  if($org->type!='organization'){
+    return false;
+  }
+    $org->field_allow_employeeid['und'][0]['value'] = 1;
+    if(node_save($org)){
+      return true;
+    }
+    return false;
+}
+
+function atdove_user_invitation_employe_id_allowed_orgs_revoke($orgID){
+  $org = node_load($orgID);
+  if($org->type!='organization'){
+    return false;
+  }
+    $org->field_allow_employeeid['und'][0]['value'] = 0;
+    if(node_save($org)){
+      return true;
+    }
+    return false;
+}
+
+function atdove_user_invitation_import_team_management_id_change_page(){
+  $orgID = organization_control_orgID();
+  $body = "<h1>Update Employee IDs for Existing Members</h1>";
+  $body .= "
+    <h2>Employee IDs</h2>
+    <p class='user-invite-message'>
+        This tool allows you to updates user's Employee IDs from an old ID to a new ID.
+      <br />
+      <br />
+        &bull;&nbsp;The CSV must contain at least two columns with these exact header(s):
+      <br />
+        &nbsp;&nbsp;&nbsp;&nbsp;";
+  $body .= "\"Old User ID\" and ";
+  $body .= "\"New User ID\"";
+  $body .= "
+      <br />
+      <br />
+        &bull;&nbsp;Example CSV format:
+      <br />
+        &nbsp;&nbsp;&nbsp;&nbsp;";
+  $body .= "\"Old User ID\",";
+  $body .= "\"New User ID\"<br />";
+  $body .= "&nbsp;&nbsp;&nbsp;&nbsp;\"887123\",";
+  $body .= "\"1764532\"<br />";
+  $body .= "&nbsp;&nbsp;&nbsp;&nbsp;\"776632\",";
+  $body .= "\"565409\"";
+  $body .= "</p>";
+  $output['body'] = array(
+    '#type' => 'markup',
+    '#markup' => $body,
+  );
+  $output['employee_id_form'] = drupal_get_form('atdove_user_invitation_import_team_management_id_change_form');
+  $output['employee_id_form']['#prefix'] = "<div id='import_employee_ids_form'>";
+  $output['employee_id_form']['#suffix'] = "</div>";
+  return $output;
+}
+
+/*
+* A form to upload and process a team management import and update employee IDs
+*/
+function atdove_user_invitation_import_team_management_id_change_form($form,&$form_state){
+
+  $form['headers'] = array(
+    '#type' => 'hidden',
+    '#value' => 1,
+  );
+
+  //ask for the delimiter
+  $form['delimter'] = array(
+    '#type' => 'select',
+    '#title' => 'Fields are delimted by:',
+    '#options' => array(
+      "tab" => "tab",
+      "comma" => "comma"
+    ),
+    '#default_value' => "comma"
+  );
+
+  //ask for the file.
+  $form['csvfile'] = array(
+    '#type' => 'file',
+    '#title' => t('CSV File'),
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Update'),
+  );
+
+  return $form;
+
+}
+
+/*
+ * validate handler for the update employee id form
+*/
+function atdove_user_invitation_import_team_management_id_change_form_validate($form, &$form_state) {
+  $orgID = organization_control_orgID();
+  if($orgID==false){
+    form_set_error('file', t("Failed to validate your organization and administraion role."));
+  }else{
+    //process the file
+    $file = file_save_upload('csvfile', array(
+      // Validate extensions.
+      'file_validate_extensions' => array('csv'),
+    ));
+    if ($file) {
+      // Move the file into the Drupal file system.
+      $directory = 'private://update_employee_ids';
+      //the file_move() function should create the directory for us but I had some errors in testing so I do it manually.
+      if(!file_exists(drupal_realpath($directory)."/")){
+        file_prepare_directory($directory, FILE_CREATE_DIRECTORY);
+      }
+      $directory = $directory.'/'.$orgID;
+      if(!file_exists(drupal_realpath($directory)."/")){
+        file_prepare_directory($directory, FILE_CREATE_DIRECTORY);
+      }
+      $destination = $directory.'/'.$file->filename;
+      if ($file = file_move($file, $destination)) {
+        // Save the file for use in the submit handler.
+        $form_state['storage']['file'] = $file;
+      }
+      else {
+        form_set_error('file', t("Failed to write the uploaded file to the appropriate storage area"));
+      }
+    }
+    else {
+      form_set_error('file', t('No file was uploaded.'));
+    }
+
+    //run through the csv and confirm this won't break the limti
+    //parser
+    //go through the submitted data
+    //determine the delimiter
+    switch($form_state['values']['delimter']){
+      case"comma":
+        $delimiter = ",";
+        break;
+      case"tab":
+        $delimiter = "\t";
+        break;
+      default:
+        $delimiter = ",";
+        break;
+    }
+
+    if($fp = fopen(drupal_realpath($file->uri), 'r')){
+
+      $linecount = 0;
+      while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+        if($linecount==0){
+          //find the new id col
+          $newIDKey = array_search('New User ID',$entry);
+          if($newIDKey===false){
+            form_set_error('file','The "New User ID" column was not found');
+          }
+          $oldIDKey  = array_search('Old User ID',$entry);
+          if($oldIDKey===false){
+            form_set_error('file','The "Old User ID" column was not found');
+          }
+        }
+        $linecount++;
+      }
+    }
+    else{
+      form_set_error('file', t("The file failed to load."));
+    }
+  }
+}
+
+/*
+ * submit hander for the import team management ID change feature
+*/
+function atdove_user_invitation_import_team_management_id_change_form_submit($form, &$form_state) {
+  global $user;
+  //get the file
+  $file = $form_state['storage']['file'];
+  // We are done with the file, remove it from storage.
+  unset($form_state['storage']['file']);
+  // Make the storage of the file permanent.
+  $file->status = FILE_STATUS_PERMANENT;
+  // Save file status.
+  file_save($file);
+
+  //key on employeeID
+  $emailEntryKey = 1;
+
+  //parse the CSV
+  //parser
+  //determine the delimiter
+  switch($form_state['values']['delimter']){
+    case"comma":
+      $delimiter = ",";
+      break;
+    case"tab":
+      $delimiter = "\t";
+      break;
+    default:
+      $delimiter = ",";
+      break;
+  }
+  $fp = fopen(drupal_realpath($file->uri), 'r');
+  $linecount = 0;
+  $operations = array();
+  if($fp){
+    while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+      if($linecount==0){
+        //find the email col
+        $newIDKey = array_search('New User ID',$entry);
+        $oldIDKey  = array_search('Old User ID',$entry);
+      }
+
+      if($linecount>0){
+        $operations[] = array('atdove_user_invitation_team_management_update_employee_id',array(array($entry[$oldIDKey]=>$entry[$newIDKey]),false));
+      }
+      $linecount++;
+    }
+    // Start Batch of team changes
+    $batch = array(
+      'title' => t('Updating Employee IDs'),
+      'operations' => $operations,
+      'finished' => 'atdove_user_invitation_team_management_update_employee_id_batch_finish',
+      'init_message' => t('Implementing...'),
+      'progress_message' => t('Processed @current members out of @total.'),
+      'error_message' => t('Employee IDs could not be updated.'),
+    );
+    watchdog('team_management_import',"An Employee ID Update import file was processed by %username.",array('%username'=>$user->name));
+    // Set the batch operation.
+    batch_set($batch);
+  }
+}
+
+
+function atdove_user_invitation_team_management_update_employee_id($members){
+  global $user;
+  foreach($members as $oldID => $newID){
+    $orgID = organization_control_orgID();
+    $error = false;
+    $fc_query = new EntityFieldQuery();
+    $fcr = $fc_query->entityCondition('entity_type', 'field_collection_item')
+      ->fieldCondition('field_employee_id', 'value', $oldID, '=')
+      ->execute();
+    if(!empty($fcr['field_collection_item'])) {
+      $keys = array_keys($fcr['field_collection_item']);
+      //load this FC and check the org value.
+      $fcs = entity_load('field_collection_item', $keys);
+      foreach ($fcs as $fcid => $fc) {
+        //if this org id matches the current user's id. and verify this user is an admin
+        if ($fc->field_org_id_for_employee_id['und'][0]['value'] == $orgID && organization_control_is_group_admin($orgID,$user->uid)) {
+          $fc->field_employee_id['und'][0]['value'] = $newID;
+          entity_save('field_collection_item', $fc);
+        }
+      }
+    }
+  }
+}
+
+function atdove_user_invitation_team_management_update_employee_id_batch_finish(){
+  drupal_set_message(t('The employeeIDs have been updated.'));
+}
+
+
+function atdove_user_invitation_import_employee_id_page(){
+  $orgID = organization_control_orgID();
+  $body = "<h1>Import Employee IDs for Existing Members</h1>";
+  $body .= "
+    <h2>Employee IDs</h2>
+    <p class='user-invite-message'>
+        This tool allows you to add Employee IDs to your existing members.
+      <br />
+      <br />
+        If you need to invite new members or futher manage your current team you may wish to use the
+      <br />
+      <br />
+        &bull;&nbsp;The CSV must contain at least two columns with these exact header(s):
+      <br />
+        &nbsp;&nbsp;&nbsp;&nbsp;";
+  $body .= "\"User ID\" and ";
+  $body .= "\"Email\"";
+  $body .= "
+      <br />
+      <br />
+        &bull;&nbsp;Example CSV format:
+      <br />
+        &nbsp;&nbsp;&nbsp;&nbsp;";
+  $body .= "\"User ID\",";
+  $body .= "\"Email\"<br />";
+  $body .= "&nbsp;&nbsp;&nbsp;&nbsp;\"887123\",";
+  $body .= "\"johndoe@example.com\"<br />";
+  $body .= "&nbsp;&nbsp;&nbsp;&nbsp;\"776632\",";
+  $body .= "\"janedoe@example.com\"";
+  $body .= "</p>";
+  $output['body'] = array(
+      '#type' => 'markup',
+      '#markup' => $body,
+  );
+  $output['employee_id_form'] = drupal_get_form('atdove_user_invitation_employee_id_form');
+  $output['employee_id_form']['#prefix'] = "<div id='import_employee_ids_form'>";
+  $output['employee_id_form']['#suffix'] = "</div>";
+  return $output;
+}
+
+/*
+* A form to upload and process a team management import
+*/
+function atdove_user_invitation_employee_id_form($form,&$form_state){
+
+  $orgID = organization_control_orgID();
+
+  //ask if there are headers
+//   $form['headers'] = array(
+//     '#type' => 'checkbox',
+//     '#title' => 'Headers Are In Row 1',
+//     '#default_value' => 1,
+//   );
+  $form['headers'] = array(
+    '#type' => 'hidden',
+    '#value' => 1,
+  );
+
+  //ask for the delimiter
+   $form['delimter'] = array(
+    '#type' => 'select',
+    '#title' => 'Fields are delimted by:',
+    '#options' => array(
+      "tab" => "tab",
+      "comma" => "comma"
+    ),
+    '#default_value' => "comma"
+  );
+
+  //ask for the file.
+  $form['csvfile'] = array(
+    '#type' => 'file',
+    '#title' => t('CSV File'),
+  );
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Import'),
+  );
+
+  return $form;
+
+}
+
+/*
+ * validate hander for the import employeeID form
+*/
+function atdove_user_invitation_employee_id_form_validate($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID();
+  if($orgID==false){
+    form_set_error('file', t("Failed to validate your organization and administraion role."));
+  }else{
+    //process the file
+    $file = file_save_upload('csvfile', array(
+      // Validate extensions.
+      'file_validate_extensions' => array('csv'),
+    ));
+    if ($file) {
+      // Move the file into the Drupal file system.
+      $directory = 'private://import_employee_ids';
+      //the file_move() function should create the directory for us but I had some errors in testing so I do it manually.
+      if(!file_exists(drupal_realpath($directory)."/")){
+        file_prepare_directory($directory, FILE_CREATE_DIRECTORY);
+      }
+      $directory = $directory.'/'.$orgID;
+      if(!file_exists(drupal_realpath($directory)."/")){
+        file_prepare_directory($directory, FILE_CREATE_DIRECTORY);
+      }
+      $destination = $directory.'/'.$file->filename;
+      if ($file = file_move($file, $destination)) {
+        // Save the file for use in the submit handler.
+        $form_state['storage']['file'] = $file;
+      }
+      else {
+        form_set_error('file', t("Failed to write the uploaded file to the appropriate storage area"));
+      }
+    }
+    else {
+      form_set_error('file', t('No file was uploaded.'));
+    }
+
+    //run through the csv and confirm this won't break the limti
+    //parser
+    //go through the submitted data
+    //determine the delimiter
+    switch($form_state['values']['delimter']){
+      case"comma":
+        $delimiter = ",";
+      break;
+      case"tab":
+        $delimiter = "\t";
+      break;
+      default:
+        $delimiter = ",";
+      break;
+    }
+
+    if($fp = fopen(drupal_realpath($file->uri), 'r')){
+
+      $linecount = 0;
+      while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+        if($form_state['values']['headers']==1 && $linecount==0){
+          //find the email col
+          $emailEntryKey = array_search('Email',$entry);
+          if($emailEntryKey===false){
+            form_set_error('file','The "Email" column was not found');
+          }
+          $idEntryKey  = array_search('User ID',$entry);
+          if($idEntryKey===false){
+            form_set_error('file','The "User ID" column was not found');
+          }
+        }elseif($linecount==0){
+          //if this is an orgWithEmployeeID then find the User ID col
+            $emailEntryKey = 1;
+            $idEntryKey  = 0;
+        }
+
+        if($form_state['values']['headers']==0 || $linecount>0){
+          $sampleKey = $entry[$emailEntryKey];
+          break;
+        }
+        $linecount++;
+      }
+
+      //an employeeID could be in so many different formats I choose to skip this validation
+      if(!valid_email_address($sampleKey)){
+        form_set_error('file',"The 2nd column ( ".$samplekey." ) does not seem to be emails or your CSV is not in a proper format.");
+      }
+    }
+    else{
+      form_set_error('file', t("The file failed to load."));
+    }
+  }
+}
+
+/*
+ * submit hander for the import team management feature
+*/
+function atdove_user_invitation_employee_id_form_submit($form, &$form_state) {
+  global $user;
+  $orgID = organization_control_orgID();
+  //get the file
+  $file = $form_state['storage']['file'];
+  // We are done with the file, remove it from storage.
+  unset($form_state['storage']['file']);
+  // Make the storage of the file permanent.
+  $file->status = FILE_STATUS_PERMANENT;
+  // Save file status.
+  file_save($file);
+
+  //key on employeeID
+  $emailEntryKey = 1;
+
+
+  //parse the CSV
+    //parser
+    //determine the delimiter
+  switch($form_state['values']['delimter']){
+    case"comma":
+      $delimiter = ",";
+    break;
+    case"tab":
+      $delimiter = "\t";
+    break;
+    default:
+      $delimiter = ",";
+    break;
+  }
+  $fp = fopen(drupal_realpath($file->uri), 'r');
+  $linecount = 0;
+  $operations = array();
+  if($fp){
+    while(($entry = fgetcsv($fp,0,$delimiter,'"')) !== FALSE) {
+      if($form_state['values']['headers']==1 && $linecount==0){
+        //find the email col
+        $emailEntryKey = array_search('Email',$entry);
+        $idEntryKey  = array_search('User ID',$entry);
+      }elseif($linecount==0){
+        //if this is an orgWithEmployeeID then find the User ID col
+          $emailEntryKey = 1;
+          $idEntryKey  = 0;
+      }
+
+      if($form_state['values']['headers']==0 || $linecount>0){
+        $operations[] = array('atdove_user_invitation_confirm_management_add_employee_id',array(array($entry[$idEntryKey]=>$entry[$emailEntryKey]),false));
+      }
+      $linecount++;
+    }
+    // Start Batch of team changes
+    $batch = array(
+      'title' => t('Adding Employee IDs'),
+      'operations' => $operations,
+      'finished' => 'atdove_user_invitation_employee_id_form_batch_finish',
+      'init_message' => t('Implementing...'),
+      'progress_message' => t('Processed @current members out of @total.'),
+      'error_message' => t('Employee IDs could not be added.'),
+    );
+    watchdog('team_management_import',"An Employee ID Import file was processed by %username.",array('%username'=>$user->name));
+    // Set the batch operation.
+    batch_set($batch);
+  }
+}
+
+function atdove_user_invitation_confirm_management_add_employee_id($members){
+  global $user;
+  foreach($members as $employeeID => $email){
+    $orgID = organization_control_orgID();
+    $error = false;
+    //find the user by email
+    $member = user_load_by_mail($email);
+    if(!$member){
+      $error = true;
+    }
+    $userOrgID = organization_control_orgID($member);
+    //confirm this user doesn't already have this employee id
+
+    //confirm the current user manages the member
+    if($orgID!=$userOrgID || !organization_control_is_group_admin($orgID,$user->uid)){
+      $error = true;
+    }
+
+    if(isset($member->field_org_employee_ids['und'])){
+      foreach($member->field_org_employee_ids['und'] as $existingEmployeeID){
+        $eeidfcid = $existingEmployeeID['value'];
+        $eeidfc = entity_load('field_collection_item', array($eeidfcid));
+        if($eeidfc[$eeidfcid]->field_org_id_for_employee_id['und'][0]['value']==$orgID && $eeidfc[$eeidfcid]->field_employee_id['und'][0]['value']==$employeeID){
+          $error = true;
+        }
+      }
+    }
+    if($error==false){
+      atdove_user_invitations_add_employeeID(array($employeeID=>$email));
+    }
+
+  }
+}
+
+function atdove_user_invitation_employee_id_form_batch_finish(){
+  drupal_set_message(t('The imported employeeIDs have been implemented.'));
+}
+
+function atdove_user_invitation_cancel_all_invites($gid){
+  if($gid>0){
+    $query = db_update('atdove_invites');
+    $query->fields(array(
+      'active' => 0
+    ));
+    $query->condition('gid',$gid);
+    $query->condition('active','1');
+    $r = $query->execute();
+    if($r == false){
+      return false;
+    }else{
+  	  return true;
+    }
+  }else{
+    return false;
+  }
+
+}
+
+function atdove_user_invitation_cancel_invites($uids){
+  if(is_array($uids) && count($uids)>0){
+    $query = db_update('atdove_invites');
+    $query->fields(array(
+      'active' => 0
+    ));
+    $query->condition('uid',$uids,'IN');
+    $query->condition('active','1');
+    $r = $query->execute();
+    if($r == false){
+      return false; //Bad sql update
+    }else{
+      return true;
+    }
+  }
+  else{
+    return false; //Bad array of UIDs
+  }
+}
+
+function atdove_user_invitations_user_load_by_employeeID($employeeID,$orgID) {
+
+  //first get a list of org members that have ids
+  $queryID = db_select('field_data_field_org_id_for_employee_id','eoid');
+  $queryID->condition('eoid.field_org_id_for_employee_id_value',$orgID);
+  $queryID->join('field_data_field_employee_id','eid','eid.entity_id = eoid.entity_id');
+  $queryID->join('field_data_field_org_employee_ids','ids','ids.field_org_employee_ids_value = eoid.entity_id');
+  $queryID->join('og_membership','m',"m.etid = ids.entity_id && m.field_name = 'og_user_node' && m.gid='".$orgID."'");
+  $queryID->condition('eid.field_employee_id_value',$employeeID);
+  $queryID->addField('ids','entity_id','uid');
+  $resultsID = $queryID->execute();
+  // There should only be one user that has this unique id. In case there are
+  // multiple the query is sorted by user creation and the most recent user is returned.
+  while($rID = $resultsID->fetchAssoc()){
+    $account = user_load($rID['uid']);
+    if (is_object($account)) {
+      return $account;
+    }
+  }
+  return false;
+}
+
+function atdove_user_invitations_testbed() {
+    $output = "<h1>Test bed</h1>";
+
+    $outputStr = $output;
+
+    $content = array();
+
+    $content['outputStr'] = array(
+        '#markup' => $outputStr,
+        '#type' => 'markup',
+    );
+
+    $content['atdove_user_invitations_testbed_form'] = drupal_get_form('atdove_user_invitations_testbed_form');
+
+    return $content;
+}
+
+function atdove_user_invitations_testbed_form($form,&$form_state) {
+    $form['go'] = array (
+        '#type' => 'submit',
+        '#value' => t('Bug Fix.'),
+        '#attributes' => array(
+            'class' => array(
+                'button-affirmative'
+            )
+        )
+    );
+    return $form;
+}
+
+
+function atdove_user_invitations_testbed_form_submit() {
+
+}
+
+/**
+ * Implements hook_views_query_alter().
+ */
+function atdove_user_invitations_views_query_alter(&$view, &$query) {
+  $view_name = $view->name;
+  $display_name = $view->current_display;
+
+  if ($view_name == 'invites' && $display_name == 'block_1') {
+    // Sometimes a user has admin role in two groups (At least according to
+    // organization_control_is_group_admin() which is called by this view in the
+    // contextual argument. That function was written by previous devs and may be suspect,
+    // but all we can do is assume it's correct.). In this case the view receives an
+    // argument like "6680351+6778606". Querying the atdove_invites table for this gid will fail.
+    // Since we can't say which gid is the "correct" one to query for, we'll use whatever is
+    // in $_SESSION['og_context']['gid'].
+    if (strpos($view->args[0], '+') !== false) {
+      if (isset($_SESSION['og_context']['gid'])) {
+        $query->where[0]['conditions'][0]['value'][':atdove_invites_gid'] = $_SESSION['og_context']['gid'];
+      }
+      else {
+        // If there is no session gid, query for all gids we received as args.
+        unset($query->where[0]);
+        $gids = explode('+', $view->args[0]);
+        $or = db_or();
+        foreach ($gids as $key => $gid) {
+          $or
+            ->condition('atdove_invites.gid', $gid, 'LIKE');
+        }
+        $query->add_where(0, $or);
+      }
+    }
+
+    // Attempt to cleanup results by removing "duplicates".
+    $query->add_field('atdove_invites', 'uid', 'atdove_invites_uid', array('function' => 'groupby'));
+    $query->add_groupby('atdove_invites.uid');
+  }
+}

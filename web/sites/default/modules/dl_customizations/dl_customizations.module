@@ -1,0 +1,97 @@
+<?php
+
+/**
+ * @file dl_customizations.module
+ * This module extends atDove's website
+ */
+
+
+/**
+ * This module extends atDove's website
+ */
+
+function dl_customizations_swt_hash_to_uuid($hash){
+  if(strlen($hash)!=32){
+    return false;
+  }
+  $uuid = substr($hash,0,8)."-".substr($hash,8,4)."-".substr($hash,12,4)."-".substr($hash,16,4)."-".substr($hash,20,12);
+  return $uuid;
+}
+
+function dl_customizations_form_alter(&$form, &$form_state) {
+
+  //Originally users selected their track via a menu. There were nice SEO friendly URLs. For example the technican track was /all/technician.
+  //The 2018 update moves the track decision into the exposed filters. This causes urls like /all?field_tags_tid=6
+  //This Hook Form Alter inspects this exposed form and if that track variable is set, redirects to SEO friendly one.
+  //Any other parts of the query string (other exposed filters) should be maintained.
+  //The Track Vocab is field_tags_tid (vid = 1)
+  if($form['#id'] == "views-exposed-form-content-for-users-page"){
+    //if the term is the context var (arg(1)) then default that field
+    $current_path = drupal_get_destination();
+    $destination = $current_path['destination'];
+    $url_base_parts = explode("?", $destination);
+    $url_base = $url_base_parts[0];
+    $url_everything_else = substr($destination,strlen($url_base));
+    $url_path_parts = explode("/", $url_base);
+    if(!empty($url_path_parts[1])) {
+      $term_in_path = ucfirst($url_path_parts[1]);
+      $terms = taxonomy_get_term_by_name($term_in_path, 'tags');
+      //if the contextual variable is a taxonomy term AND the exposed filter for this taxonomy term is empty or se to all
+      if (is_array($terms) && count($terms) > 0 && (empty($form_state['input']['field_tags_tid']) || $form_state['input']['field_tags_tid'] == "All")) {
+        $term = reset($terms);
+        $term_name = $term->name;
+        $term_id = $term->tid;
+        //set the default value.
+        $form['field_tags_tid']["#default_value"] = $term_id;
+        $form_state['input']['field_tags_tid'] = $term_id;
+      }
+    }
+    //add a new submit handler
+    $form["#submit"][] = 'dl_customizations_content_exposed_filter_to_seo_url';
+  }
+}
+
+//Originally users selected their track via a menu. There were nice SEO friendly URLs. For example the technican track was /all/technician.
+//The 2018 update moves the track decision into the exposed filters. This causes urls like /all?field_tags_tid=6
+//This Hook Form Alter inspects this exposed form and if that track variable is set, redirects to SEO friendly one.
+//Any other parts of the query string (other exposed filters) should be maintained.
+//The Track Vocab is field_tags_tid (vid = 1)
+function dl_customizations_content_exposed_filter_to_seo_url($form, $form_state) {
+  //if the job cat is not in the URL path but is a submitted filter
+  if(!empty($form_state['input']['field_tags_tid']) && $form_state['input']['field_tags_tid']!="All" ){
+    //get the term name from the submitted value
+    $term = taxonomy_term_load($form_state['input']['field_tags_tid']);
+    $term_name = $term->name;
+    $current_path = drupal_get_destination();
+    $destination = $current_path['destination'];
+    $url_base_parts = explode("?", $destination);
+    $url_base = $url_base_parts[0];
+    $url_everything_else = substr($destination,strlen($url_base));
+    $view_url = $form_state['view']->display['page']->display_options['path'];
+    //add this term name as the next contextual var, prepare to add a query string.
+    $new_destination = $view_url."/".strtolower($term_name);
+    $new_destination_full = $new_destination.$url_everything_else;
+
+    //if the term name is not the last path part (contextual var), add it, otherwise the contextual vars match the URL query and we don't need to take any action.
+    if($new_destination != $url_base) {
+
+      //format these query query string key/value pairs in an array for drupal's goto
+      $query_pairs = explode("&",$url_base_parts[1]);
+      foreach($query_pairs as $query_pair){
+        $query_pair_parts = explode('=',$query_pair);
+        $query_vars[urldecode($query_pair_parts[0])] = urldecode($query_pair_parts[1]);
+      }
+
+      //change the destination to the url with the SEO friendly base
+      //unset the query destination if its set.
+      unset($_GET['destination']);
+      //set the redirect, This didn't seem to do anything but its not wrong.
+      $form_state['redirect'] = $new_destination_full;
+      //set the action. This didn't seem to do anything but its not wrong.
+      $form['#action'] = $new_destination;
+      drupal_goto($new_destination,array('query' => $query_vars));
+    }
+
+  }
+
+}

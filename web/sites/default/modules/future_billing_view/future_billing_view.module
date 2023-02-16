@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Future Billing View feature.
+ */
+
+include_once 'future_billing_view.features.inc';

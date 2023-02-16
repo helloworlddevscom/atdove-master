@@ -1,0 +1,4 @@
+name = atDove custom tokens
+description = "atdove.org custom tokens."
+core = 7.x
+package = "atDove Customization"

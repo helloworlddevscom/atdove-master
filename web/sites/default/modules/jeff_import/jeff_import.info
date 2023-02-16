@@ -1,0 +1,6 @@
+name = Jeff Import Module
+description = A DEV-only module to import content from the old Atdove.org site.
+core = 7.x
+package = Other
+dependencies[] = php
+dependencies[] = rules

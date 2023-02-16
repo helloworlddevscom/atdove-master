@@ -1,0 +1,4 @@
+name = Atdove Membership Report
+description = "generate custom CSV for member report export"
+core = 7.x
+package = "atDove Customization"

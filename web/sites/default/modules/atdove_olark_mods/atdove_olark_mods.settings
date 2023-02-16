@@ -1,0 +1,17 @@
+/* This is the settings for the olark module. I added it here to keep in under source control and be easily accessible. */
+
+<!-- begin olark code -->
+<script type="text/javascript" async> ;(function(o,l,a,r,k,y){if(o.olark)return; r="script";y=l.createElement(r);r=l.getElementsByTagName(r)[0]; y.async=1;y.src="//"+a;r.parentNode.insertBefore(y,r); y=o.olark=function(){k.s.push(arguments);k.t.push(+new Date)}; y.extend=function(i,j){y("extend",i,j)}; y.identify=function(i){y("identify",k.i=i)}; y.configure=function(i,j){y("configure",i,j);k.c[i]=j}; k=y._={s:[],t:[+new Date],c:{},l:a}; })(window,document,"static.olark.com/jsclient/loader.js");
+/*olark('api.visitor.getDetails', callback);*/
+olark.configure('system.google_analytics_id', 'UA-24611161-1');
+olark.configure('features.google_analytics', true);
+olark.configure('features.prechat_survey', true);
+olark.configure("locale.name_input_text", "Full Name");
+olark.configure("locale.email_input_text", "Email");
+olark.configure("locale.phone_input_text", "Phone");
+olark.configure("locale.introduction_error_text", "Please leave a name and email address so we can contact you in case we get disconnected");
+olark.configure("locale.introduction_messages", "Hi there! To chat with an atdove agent, please fill out these fields.");
+olark.configure("locale.introduction_submit_button_text", "Start chat");
+olark.identify('1357-637-10-7143');
+</script>
+<!-- end olark code -->

@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the reimport_taxonomy feature.
+ */
+
+include_once 'reimport_taxonomy.features.inc';

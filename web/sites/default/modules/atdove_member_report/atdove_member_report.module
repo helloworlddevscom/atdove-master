@@ -1,0 +1,485 @@
+<?php
+/**
+ * @file
+ * generate custom CSV for member report export
+ * access permission key :  'access member report content'   This will appear in access argument in menu
+ */
+
+/**
+ * Implements hook_permission().
+ */
+function atdove_member_report_permission() {
+  return array(
+    'access member report content' => array(
+      'title' => t('Access membership report'),
+    )
+  );
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * Only display menu item if individual has permission item (access arguments)
+ * Top items key will be URL that will call form 'admin/export/member_report'
+ */
+function atdove_member_report_menu() {
+  $items = array();
+
+  $items['admin/export/member_report'] = array(
+    'title' => 'Member Export Report',
+    'description' => 'A form to generate a CSV export',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('atdove_member_report_form'),
+    'access arguments' => array('access member report content'),
+    'type' => MENU_NORMAL_ITEM, // Will appear in Navigation menu.
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_form().
+ *
+ * Member Export Report form.
+ */
+function atdove_member_report_form($form, &$form_state) {
+  // Construct filename based on current user ID.
+  // This way multiple users can run the report at the same time without
+  // the first user accidentally deleting the file the previous user is writing to.
+  global $user;
+  $filename = 'member_report_'.$user->uid.'.csv';
+
+  // If export has completed and file exists, enable download button, otherwise disable it.
+  if (file_exists('private://' . $filename)) {
+    $export_attributes = array(
+      'filename' => $filename,
+    );
+  } else {
+    $export_attributes = array(
+      'filename' => null,
+      'disabled' => 'disabled'
+    );
+  }
+
+  $form['submit_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Generate Member Report CSV'),
+    '#submit' => array('atdove_member_report_form_submit'),
+    '#attributes' => array(
+      'filename' => $filename
+    ),
+  );
+
+  $form['export_button'] = array(
+    '#type' => 'submit',
+    '#value' => t('Download Report'),
+    '#submit' => array('atdove_member_report_form_export'),
+    '#attributes' => $export_attributes
+  );
+
+  return $form;
+}
+
+/**
+ *
+ * Handle form submission. Read the CSV into a set of batch operations
+ * and fire them off.
+ *
+ * @param $form
+ * @param $form_state
+ */
+function atdove_member_report_form_submit($form, &$form_state) {
+  // Batch API setup
+
+  // SQL query here to calculate total number of rows per batch
+  // 2000 estimated to complete without memory issue
+  $batchLimit = 500;
+  $filename = $form['submit_button']['#attributes']['filename'];
+
+  // Calculate max number of expected SQL rows
+  $baseQuery = baseSQL();
+  $rowCount = db_query($baseQuery, array(':last_id' => 0))->rowCount();
+  $batchNum = ceil($rowCount/$batchLimit);
+
+  $operationsArray = [];
+
+  for ($inc = 0; $inc <= $batchNum; $inc++ ) {
+    $batchEntry = array('atdove_member_report_form_run',[$batchLimit, $filename]);
+    array_push($operationsArray, $batchEntry);
+  }
+
+  $batch = [
+    'title' => t('Exporting CSV ...'),
+    'operations' => $operationsArray,
+    'init_message' => t('Member Report generation is starting.'),
+    'progress_message' => t('Processed @current out of @total.'),
+    'error_message' => t('An error occurred during processing'),
+    'finished' => 'atdove_member_report_form_finished',
+  ];
+
+  batch_set($batch);
+}
+
+/**
+ * Main body function.   Will run for each batch called
+ * @param $limit
+ * @param $filename
+ * @param $context
+ */
+function atdove_member_report_form_run($limit, $filename, &$context) {
+
+  $members = [];
+  // First pass through, set initial conditions
+  if (empty($context['results'])) {
+    // If previous run exists, delete it
+    if (file_exists('private://' . $filename)) {
+      unlink('private://' . $filename);
+    };
+    // Store filename variable in results so upon complete run, to download/delete the file
+    $context['results']['filename'] = $filename;
+
+    $header = printHead();
+    array_push($members, $header);
+    $context['results']['current_id'] = 0;
+    $context['results']['progress'] = 0;
+
+    // Calculate max number of expected SQL rows
+    $baseQuery = baseSQL();
+    $context['results']['max'] = db_query($baseQuery, array(':last_id' => $context['results']['current_id']))->rowCount();
+    $context['results']['completed'] = 0;
+  }
+
+  if (!$context['results']['completed']) {
+    // Start this batch.   Not done yet.
+    $context['finished'] = 0;
+    $limitQuery = baseSQL($limit);
+    $query = db_query($limitQuery, [':last_id' => $context['results']['current_id']]);
+
+    // Original script below
+    while ($memberRow = $query->fetchAssoc()) {
+      $license = NULL;
+      if (!is_null($memberRow['orgid'])) {
+        $license = get_license($memberRow['orgid']);
+      }
+      $is_admin = is_admin($memberRow['id'], $memberRow['orgid']);
+      $member = [
+        "id" => $memberRow['id'],
+        "fn" => $memberRow['fn'],
+        "ln" => $memberRow['ln'],
+        "title" => $memberRow['title'],
+        "org" => $memberRow['org'],
+        "orgid" => $memberRow['orgid'],
+        "name" => $memberRow['name'],
+        "email" => $memberRow['email'],
+        "created" => $memberRow['created'],
+        "login" => $memberRow['login'],
+        "optout" => $memberRow['optout'],
+        "admin" => $is_admin,
+      ];
+
+      // remember get_license can still return false
+      if ($license) {
+        $member['license_id'] = $license['license_id'];
+        $member['product'] = get_product($license['product_id']);
+        $member['seats'] = $license['field_total_seats_value'];
+        $member['duration'] = convert_duration($license['commerce_license_duration_value']);
+        $member['expires'] = $license['expires'];
+        $member['billing_user_id'] = $license['uid'];
+      }
+
+      // Finished processing Query run
+      // Update our progress information.
+      $members = printLine($member, $members);
+      $last_row = db_query($limitQuery, [':last_id' => $context['results']['current_id']])->fetchField();
+      $context['results']['current_id'] = $last_row;
+      $context['results']['progress']++;
+      $context['message'] = t('Now processing member report CSV...');
+    }
+
+    $context['results']['data'] = $members;
+  }
+  // This batch is done.  Proceed to next batch.
+  $context['finished'] = 1;
+
+  // Inform the batch engine we are not yet finished, but done with this batch session
+
+  if ($context['results']['progress'] >= $context['results']['max']) {
+    $context['results']['completed'] = 1;
+  } else {
+    generate_export_csv($context['results']['data'], $context['results']['filename']);
+  }
+
+}
+
+/**
+ * @param $data
+ * @param $filename
+ */
+function generate_export_csv($data, $filename)
+{
+  // Send to buffer for processing
+  $output = fopen('private://' . $filename, 'a');
+  foreach ($data as $row) {
+    fputcsv($output, $row);
+  }
+  fclose($output);
+}
+
+/**
+ * Callback for when download button is clicked.
+ *
+ * Only allow for one download for security. After download, delete file.
+ *
+ * @param $form
+ * @param $form_state
+ */
+function atdove_member_report_form_export($form, &$form_state) {
+
+  $filename = $form['export_button']['#attributes']['filename'];
+
+  // Add HTTP headers for CSV file download.
+  drupal_add_http_header('Content-Disposition',  'attachment; filename=' . $filename);
+  drupal_add_http_header('Pragma','public');
+  drupal_add_http_header('Expires','0');
+  drupal_add_http_header('Cache-Control','max-age=300; must-revalidate, post-check=0, pre-check=0');
+  drupal_add_http_header('Content-Description','File Transfer');
+  drupal_add_http_header('Content-Type', 'text/csv; utf-8');
+  drupal_add_http_header('Content-Transfer-Encoding',  'binary');
+  drupal_add_http_header('Content-Length', filesize('private://' . $filename));
+
+  // Read the file to the output buffer and exit.
+  readfile('private://' . $filename);
+
+  // Delete the file
+  unlink('private://' . $filename);
+  exit;
+}
+
+/**
+ * @param $success
+ * @param $results
+ * @param $operations
+ */
+function atdove_member_report_form_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we do something meaningful with the results.
+    $message = t('successfully processed');
+    drupal_set_message($message);
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    $message = t('An error occurred while processing %error_operation with arguments: @arguments', array('%error_operation' => $error_operation[0], '@arguments' => print_r($error_operation[1], TRUE)));
+    drupal_set_message($message, 'error');
+    unlink('private://' . $results['filename']);
+  }
+}
+
+// Original Export Script functions Below
+/*   Print the header for the CSV   */
+function printHead()
+{
+  $header['id'] = "ID";
+  $header['fn'] = "First Name";
+  $header['ln'] = "Last Name";
+  $header['title'] = "Title";
+  $header['org'] = "Organization";
+  $header['orgid'] = "Org Id";
+  $header['name'] = "Username";
+  $header['email'] = "Email";
+  $header['created'] = "Created";
+  $header['login'] = "Last Login";
+  $header['optout'] = "Opt Out";
+  $header['admin'] = "Admin";
+  $header['license_id'] = "license_id";
+  $header['product'] = "product";
+  $header['seats'] = "seats";
+  $header['duration'] = "duration";
+  $header['expires'] = "expires";
+  $header['billing_user_id'] = "billing_user_id";
+
+  return $header;
+}
+
+/*
+    Prints a delimited line in the CSV.
+    INPUT: array of key, value pairs and a type of delimiter
+*/
+function printLine($array, $members)
+{
+  foreach ($array as $key => $val) {
+    $array[$key] = str_replace('"', "'", $val);
+  }
+  array_push($members, $array);
+  return $members;
+}
+
+/**
+ * Base SQL query statement.
+ * Include $limit value to bound query size.   Limit used for each batch operation
+ * @param $limit
+ * @return string
+ */
+function baseSQL ($limit = null) {
+  $membersSql = "
+          SELECT
+            fn.entity_id as id,
+            field_first_name_value AS fn,
+            field_last_name_value AS ln,
+            field_title_value AS title,
+            n.title AS org,
+            n.nid AS orgid,
+            u.name AS name,
+            u.mail AS email,
+            FROM_UNIXTIME(u.created) AS created,
+            FROM_UNIXTIME(u.login) AS login,
+            opt.field_opt_out_of_emails_value AS optout
+          FROM
+            field_data_field_first_name AS fn
+              LEFT JOIN
+            field_data_field_last_name AS ln ON fn.entity_id = ln.entity_id
+              LEFT JOIN
+            field_revision_field_title AS t ON t.entity_id = fn.entity_id
+              LEFT JOIN
+            og_membership AS org ON org.etid = fn.entity_id
+              LEFT JOIN
+            node AS n ON nid = org.gid
+              LEFT JOIN
+            users AS u ON u.uid = fn.entity_id
+              LEFT JOIN
+            field_data_field_opt_out_of_emails AS opt ON opt.entity_id = fn.entity_id
+          WHERE
+            (	org.field_name = 'og_user_node'
+              OR org.field_name IS NULL)
+              AND (fn.entity_id > :last_id
+              AND fn.entity_id != 1)";
+
+  if ($limit) {
+    $membersSql.= " LIMIT {$limit};";
+  } else {
+    $membersSql.= ";"; }
+  return $membersSql;
+}
+
+/*
+ * Check if someone is an admin of an org
+ */
+function is_admin($id, $gid)
+{
+  $sql = "SELECT distinct og.rid FROM og_users_roles AS og WHERE og.uid = {$id}";
+  if (!is_null($gid)) {
+    $sql .= " AND og.gid = {$gid} ";
+  } else {
+    $sql .= ";";
+  }
+
+  if (!$result = db_query($sql)) {
+    return '';
+  }
+  if ($row = $result->fetchAssoc()) {
+    if ($row['rid'] == 3) {
+      return "Admin";
+    }
+    return '';
+  }
+}
+
+/*
+   Returns the product name
+*/
+function get_product($id)
+{
+  $sql = "SELECT title FROM commerce_product where product_id = {$id};";
+  if (!$result = db_query($sql)) {
+    return 'unknown';
+  }
+  if ($row = $result->fetchAssoc()) {
+    return $row['title'];
+  }
+}
+
+/*
+   Returns the human readable license duration
+*/
+function convert_duration($value)
+{
+  if ($value == 31536000) {
+    return 'annual';
+  }
+  return 'monthly';
+}
+
+/*
+   Returns the license information about a user
+*/
+function get_license($gid)
+{
+  $sid = get_billing_user($gid);
+  if (!$sid) {
+    return false;
+  }
+  $unixTimeStamp = time();
+  $sql = "
+            SELECT
+                l.license_id,
+                l.product_id,
+                FROM_UNIXTIME(l.expires) AS expires,
+                t.field_total_seats_value,
+                d.commerce_license_duration_value,
+                o.order_id,
+                l.uid,
+                l.status
+            FROM
+                commerce_license AS l
+                    LEFT JOIN
+                field_data_field_additional_seats AS s ON s.entity_id = l.product_id
+                    LEFT JOIN
+                field_data_field_total_seats AS t ON t.entity_id = s.field_additional_seats_tid
+                    LEFT JOIN
+                field_data_commerce_license AS lli ON lli.commerce_license_target_id = l.license_id
+                    LEFT JOIN
+                commerce_line_item AS li ON li.line_item_id = lli.entity_id
+                    LEFT JOIN
+                commerce_order AS o ON o.order_id = li.order_id
+                    LEFT JOIN
+                field_data_commerce_license_duration AS d ON d.entity_id = l.product_id
+            WHERE
+                l.status = 2
+                    AND l.uid = {$sid}
+                    AND l.granted < {$unixTimeStamp};";
+  if (!$result = db_query($sql)) {
+    return false;
+  }
+
+  if ($row = $result->fetchAssoc()) {
+    return $row;
+  } else {
+    return false;
+  }
+
+}
+
+/*
+    Returns the billing user of an account
+*/
+function get_billing_user($gid)
+{
+  $sql = "
+        SELECT ogm.etid
+        FROM og_membership AS ogm
+        LEFT JOIN users_roles AS r ON r.uid = ogm.etid
+        WHERE ogm.state = 1
+        AND ogm.entity_type = 'user'
+        AND ogm.field_name = 'og_user_node'
+        AND ogm.group_type = 'node'
+        AND r.rid = 10
+        AND ogm.gid = '{$gid}';";
+
+  $result = db_query($sql);
+  $row = $result->fetchAssoc();
+  if (!$row) {
+    return false;
+  }
+
+  return $row['etid'];
+}

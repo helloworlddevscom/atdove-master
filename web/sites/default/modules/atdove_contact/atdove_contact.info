@@ -1,0 +1,4 @@
+name = AtDove Contact Forms
+description = Provides contact form blocks
+core = 7.x
+files[] = atdove_contact.module

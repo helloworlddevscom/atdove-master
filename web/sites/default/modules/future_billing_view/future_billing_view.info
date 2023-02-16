@@ -1,0 +1,9 @@
+name = Future Billing View
+core = 7.x
+package = Features
+dependencies[] = views
+features[ctools][] = views:views_default:3.0
+features[features_api][] = api:2
+features[views_view][] = future_billing
+features[views_view][] = terms_of_use_and_privacy_policy
+features_exclude[dependencies][ctools] = ctools

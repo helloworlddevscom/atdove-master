@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Video Page Action Buttons feature.
+ */
+
+include_once 'video_page_action_buttons.features.inc';

@@ -1,0 +1,210 @@
+# Card On File won't work with anonymous users. In our workflow, users are anonymous 
+# when this card is run. Their user account is created later. This allows Card On File to 
+# work in this situation.
+#
+# This patch was malformed and applied manually. 
+# 
+# https://www.drupal.org/node/1553468#comment-8720641
+
+diff --git a/commerce_cardonfile.install b/commerce_cardonfile.install
+index 49186aa..fd453dd 100644
+--- a/commerce_cardonfile.install
++++ b/commerce_cardonfile.install
+@@ -84,6 +84,11 @@ function commerce_cardonfile_schema() {
+         'not null' => TRUE,
+         'default' => 0,
+       ),
++      'order_id' => array(
++        'description' => 'The {commerce_order}.order_id that originally supplied this card data, if card data was created from checkout.',
++        'type' => 'int',
++        'unsigned' => TRUE,
++      ),
+       'payment_method' => array(
+         'description' => 'The payment method method_id for this transaction.',
+         'type' => 'varchar',
+@@ -168,6 +173,7 @@ function commerce_cardonfile_schema() {
+     'primary key' => array('card_id'),
+     'indexes' => array(
+       'uid' => array('uid'),
++      'order_id' => array('order_id'),
+       'instance_id' => array('instance_id'),
+     ),
+     'foreign keys' => array(
+@@ -175,12 +181,30 @@ function commerce_cardonfile_schema() {
+         'table' => 'users',
+         'columns' => array('uid' => 'uid'),
+       ),
++      'order' => array(
++        'table' => 'commerce_order',
++        'columns' => array('order_id' => 'order_id'),
++      ),
+     ),
+   );
+ 
+   return $schema;
+ }
+ 
++ /**
++ * Adds the order_id column to the {commerce_cardonfile} table.
++ */
++function commerce_cardonfile_update_7205() {
++  $spec = array(
++    'description' => 'The {commerce_order}.order_id that originally supplied this card data, if card data was created from checkout.',
++    'type' => 'int',
++    'unsigned' => TRUE,
++  );
++  db_add_field('commerce_cardonfile', 'order_id', $spec);
++  db_add_index('commerce_cardonfile', 'order_id', array('order_id'));
++  return t('Added order_id column to commerce_cardonfile table.');
++}
++
+ /**
+  * Add the instance_default column to card data table
+  */
+diff --git a/commerce_cardonfile.module b/commerce_cardonfile.module
+index 7a082a6..9300ad1 100644
+--- a/commerce_cardonfile.module
++++ b/commerce_cardonfile.module
+@@ -555,11 +555,6 @@ function commerce_cardonfile_form_alter(&$form, &$form_state, $form_id) {
+     return;
+   }
+ 
+-  // DENY if user is not defined or is anonymous
+-  if (!isset($form_state['account']) || empty($form_state['account']->uid)) {
+-    return;
+-  }
+-
+   // Exit if no payment method instance id
+   if (empty($form['commerce_payment']['payment_method']['#default_value'])) {
+     return;
+@@ -948,6 +943,12 @@ function commerce_cardonfile_save($card_data, $billing_profile = NULL) {
+     $card_data->commerce_cardonfile_profile[LANGUAGE_NONE][0]['profile_id'] = $billing_profile->profile_id;
+   }
+ 
++  // order_id
++  $order = menu_get_object('commerce_order');
++  if (empty($card_data->order_id) && isset($order)) {
++    $card_data->order_id = $order->order_id;
++  }
++
+   return entity_save('commerce_cardonfile', $card_data);
+ }
+ 
+diff --git a/commerce_cardonfile.rules.inc b/commerce_cardonfile.rules.inc
+index 3698bc4..8e6d978 100644
+--- a/commerce_cardonfile.rules.inc
++++ b/commerce_cardonfile.rules.inc
+@@ -222,6 +222,19 @@ function commerce_cardonfile_rules_action_info() {
+     ),
+   );
+ 
++  $actions['commerce_cardonfile_update_anonymous'] = array(
++    'label' => t('Update anonymous card data'),
++    'parameter' => array(
++      'commerce_order' => array(
++        'type' => 'commerce_order',
++        'label' => t('Newly created order'),
++      ),
++    ),
++    'group' => t('Commerce Card On File'),
++    'callbacks' => array(
++      'execute' => 'commerce_cardonfile_update_anonymous',
++    ),
++  );
+ 
+   return $actions;
+ }
+@@ -278,6 +291,26 @@ function commerce_cardonfile_rules_action_order_charge_card($order, $charge = NU
+     return array('charge_card_response' => $response);
+   }
+ 
++/**
++ * Action callback; Associate anonymous card data with the newly created user.
++ *
++ * @param $order
++ *   Commerce order object.
++ */
++function commerce_cardonfile_update_anonymous($order) {
++  $query = new EntityFieldQuery();
++  $query->entityCondition('entity_type', 'commerce_cardonfile')
++  ->propertyCondition('order_id', $order->order_id);
++  $result = $query->execute();
++
++  if (isset($result['commerce_cardonfile'])) {
++    $card = end($result['commerce_cardonfile']);
++    $card_data = commerce_cardonfile_load($card->card_id);
++    $card_data->uid = $order->uid;
++    commerce_cardonfile_save($card_data);
++  }
++}
++
+   // If provided, card data will be used regardless the response returned by
+   // the `Select card on file to charge` action.
+   if (empty($card_data)) {
+diff --git a/commerce_cardonfile.rules_defaults.inc b/commerce_cardonfile.rules_defaults.inc
+new file mode 100644
+index 0000000..eeb315a
+--- /dev/null
++++ b/commerce_cardonfile.rules_defaults.inc
+@@ -0,0 +1,37 @@
++<?php
++/*
++ * @file
++ * Provides default rules configurations for commerce cardonfile
++ */
++
++/**
++ * Implementation of hook_default_rules_configuration().
++ */
++function commerce_cardonfile_default_rules_configuration() {
++  $rules = array();
++
++  $rule = rules_reaction_rule();
++
++  $rule->label = 'Update user associated with card on file data';
++  $rule->weight = 3;
++  $rule->requires = array(
++    'rules',
++    'commerce_cardonfile',
++    'commerce_checkout',
++  );
++
++  $rule->event('commerce_checkout_complete');
++
++  $rule->condition('data_is', array(
++    'data:select' => 'commerce-order:type',
++    'value' => 'commerce_order',
++  ));
++
++  $rule->action('commerce_cardonfile_update_anonymous', array(
++    'commerce_order:select' => 'commerce_order',
++  ));
++
++  $rules['commerce_cardonfile_update_anonymous'] = $rule;
++
++  return $rules;
++}
+diff --git a/includes/views/commerce_cardonfile.views_default.inc b/includes/views/commerce_cardonfile.views_default.inc
+index eff6a57..9713a67 100755
+--- a/includes/views/commerce_cardonfile.views_default.inc
++++ b/includes/views/commerce_cardonfile.views_default.inc
+@@ -439,11 +439,6 @@ function commerce_cardonfile_views_default_views() {
+   $handler->display->display_options['fields']['commerce_cardonfile_profile']['element_default_classes'] = FALSE;
+   $handler->display->display_options['fields']['commerce_cardonfile_profile']['hide_empty'] = TRUE;
+   $handler->display->display_options['fields']['commerce_cardonfile_profile']['field_api_classes'] = TRUE;
+-  /* Field: Commerce Card on File: Card data status */
+-  $handler->display->display_options['fields']['status']['id'] = 'status';
+-  $handler->display->display_options['fields']['status']['table'] = 'commerce_cardonfile';
+-  $handler->display->display_options['fields']['status']['field'] = 'status';
+-  $handler->display->display_options['fields']['status']['label'] = 'Status';
+   /* Field: Commerce Card on File: Default card */
+   $handler->display->display_options['fields']['instance_default']['id'] = 'instance_default';
+   $handler->display->display_options['fields']['instance_default']['table'] = 'commerce_cardonfile';
+@@ -462,7 +457,6 @@ function commerce_cardonfile_views_default_views() {
+   $handler->display->display_options['filters']['status']['field'] = 'status';
+   $handler->display->display_options['filters']['status']['value'] = array(
+     1 => '1',
+-    3 => '3',
+   );
+ 
+   /* Display: Page */

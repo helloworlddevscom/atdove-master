@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Organization Members Administration feature.
+ */
+
+include_once 'organization_members_administration.features.inc';

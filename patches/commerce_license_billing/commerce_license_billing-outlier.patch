@@ -1,0 +1,57 @@
+diff --git a/commerce_license_billing.info b/commerce_license_billing.info
+index 1e8c37d..6871055 100644
+--- a/commerce_license_billing.info
++++ b/commerce_license_billing.info
+@@ -23,3 +23,16 @@ files[] = includes/views/handlers/commerce_license_billing_handler_field_usage_d
+ 
+ ; Tests
+ files[] = tests/commerce_license_billing.test
++
++; Information added by Drupal.org packaging script on 2014-11-22
++version = "7.x-1.0-beta4"
++core = "7.x"
++project = "commerce_license_billing"
++datestamp = "1416675181"
++
++; This contributed module was modified by Outlier on behalf of Dove Lewis On The Floor ( onthefloor atdove )
++; These modifications were made to:
++; 1) When a CC/Transaction is unsuccessful, the order should be marked as failed and not renew. \
++; See Original Patch: https://betheoutlier.beanstalkapp.com/on-the-floor/changesets/b0e2019f76b53a883dde5aff1e4ea7fe7995952f
++; See Original Ticket: https://app.asana.com/0/93822802822452/420440861606364
++; See Drupal.org discussion and recommendation of Commerce Dunning instead. https://www.drupal.org/node/2649108
+diff --git a/commerce_license_billing.module b/commerce_license_billing.module
+index 8fad26b..0629115 100644
+--- a/commerce_license_billing.module
++++ b/commerce_license_billing.module
+@@ -287,11 +287,13 @@ function commerce_license_billing_advanced_queue_info() {
+   return array(
+     'commerce_license_billing_cycle_renew' => array(
+       'worker callback' => 'commerce_license_billing_cycle_renew_queue_process',
++      'weight' => 50,
+     ),
+     'commerce_license_billing_cycle_close' => array(
+       'worker callback' => 'commerce_license_billing_cycle_close_queue_process',
+       'retry after' => 86400,
+       'max attempts' => 5,
++      'weight' => 10,
+     ),
+   );
+ }
+@@ -311,6 +313,17 @@ function commerce_license_billing_cycle_renew_queue_process($item) {
+   }
+   $order = $billing_cycle->getOrder();
+ 
++  //If the order did not renew successfully do not create a new recurring order. 
++  //This does not cancel the license. That will be left to a cron script which may give
++  //a grace period.
++  if ($order->status!='completed') {
++    // The billing cycle has been deleted in the meantime. Nothing more to do.
++    return array(
++      'status' => ADVANCEDQUEUE_STATUS_FAILURE,
++      'result' => 'Order had not renewed successfully.',
++    );
++  }
++
+   $licenses = commerce_license_billing_get_recurring_order_licenses($order);
+   foreach ($licenses as $license) {
+     // Apply scheduled changes.

@@ -1,0 +1,14 @@
+name = Field Collection Feeds
+description = Provides feeds integration for field collection.
+core = 7.x
+package = Feeds
+dependencies[] = field_collection
+dependencies[] = feeds
+files[] = plugins/FeedsFieldCollectionProcessor.inc
+
+; Information added by Drupal.org packaging script on 2015-10-02
+version = "7.x-1.0-alpha3+2-dev"
+core = "7.x"
+project = "field_collection_feeds"
+datestamp = "1443752640"
+

@@ -1,0 +1,396 @@
+<?php
+
+function jeff_import_hookup_quiz_questions($question) { // A function invoked by Rules when questions are imported, to hook them to the quizzes they're attached to.
+  if (isset($question->field_related_test)) {
+    $quiz = node_load($question->field_related_test['und'][0]['target_id']);
+  }
+  else {
+    return;
+  }
+
+  if (isset($quiz->nid)) {
+    $result = db_query("SELECT * FROM {quiz_node_relationship} WHERE child_nid = :child AND parent_nid = :parent", array(
+      ':child' => $question->nid,
+      ':parent' => $quiz->nid
+    ));
+    $exists = NULL;
+
+    if ($result) {
+      while ($row = $result->fetchAssoc()) {
+        if (isset($row['parent_nid']) && isset($row['child_nid'])) {
+          $exists = 1;
+          watchdog('jeff_import', 'Quiz question %title already hooked to %title2', array(
+            '%title' => $question->title,
+            '%title2' => $quiz->title
+          ));
+        }
+      }
+    }
+
+    if (!$exists && $question) {
+      //dpm($row);
+
+      $row = db_insert('quiz_node_relationship')
+        ->fields(array(
+          'parent_nid' => $quiz->nid,
+          'parent_vid' => $quiz->vid,
+          'child_nid' => $question->nid,
+          'child_vid' => $question->vid,
+          'question_status' => 1,
+          'weight' => 0,
+          'max_score' => 1,
+          'auto_update_max_score' => 0,
+        ))
+        ->execute();
+      //node_save($quiz);
+      watchdog('jeff_import', 'Just hooked %title to %title2', array(
+        '%title' => $question->title,
+        '%title2' => $quiz->title
+      ));
+
+    }
+    watchdog('jeff_import','Hooking quiz question %title up to %title2', array('%title'=>$question->title,'%title2'=>$quiz->title));
+
+  }
+
+
+
+//    $question_wrapper = new MultichoiceQuestion($node);
+//    $question_wrapper->saveRelationships($quiz->nid, $quiz->vid);
+//    quiz_update_max_score_properties(array($quiz->vid));
+    /*
+     * $node->add_directly = array(
+      'new' => array(
+        $quiz->nid. '-'. $quiz->vid => $quiz->nid. '-'. $quiz->vid
+      )
+    );
+    node_save($node);
+  */
+}
+
+/**
+ * Implements hook_menu().
+ */
+function jeff_import_menu() { // Just adding a direct single-node invocation for testing.
+/*  $items['jeff/%/hook'] = array(
+    'page callback' => 'jeff_import_hookup_quiz_questions_menu',
+    'page arguments' => array(1),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['jeff/quizfix'] = array(
+    'page callback' => 'jeff_import_hookup_quiz_questions_batch',
+    'page arguments' => array(1),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );*/
+  /*$items['jeff/taxonomy-fix'] = array(
+    'page callback' => 'jeff_import_prune_taxonomy',
+    'page arguments' => array(1),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );*/
+/*  $items['jeff/import-user-roles'] = array(
+    'page callback' => 'jeff_import_user_roles',
+    'page arguments' => array(1),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['jeff/import-test-results'] = array(
+    'page callback' => 'jeff_import_test_results',
+    'page arguments' => array(1),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['jeff/fix-articles'] = array(
+    'page callback' => 'jeff_import_article_images',
+    'page arguments' => array(1),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );*/
+  $items['jeff/assignments'] = array(
+    'page callback' => 'jeff_import_assignments',
+    'page arguments' => array(1),
+    'access callback' => 'atdove_import_user_1',
+    //'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function jeff_import_hookup_quiz_questions_menu($nid) {
+  $node = node_load($nid);
+  jeff_import_hookup_quiz_questions($node);
+  return 'hi';
+}
+
+function jeff_import_hookup_quiz_questions_batch() {
+$nodes = node_load_multiple(array(), array('type' => 'multichoice'));
+  foreach ($nodes as $node) {
+    jeff_import_hookup_quiz_questions($node);
+  }
+  return 'all done';
+}
+
+function jeff_import_prune_taxonomy() {
+  // First, get rid of terms that are inactive or deleted
+  $file = fopen(DRUPAL_ROOT.'/sites/atdove.org/modules/jeff_import/terms_to_delete.csv', 'r');
+  $terms = array();
+  while(!feof($file))
+  {
+    $terms[] = (fgetcsv($file));
+  }
+  //var_dump ($terms);
+  fclose($file);
+  //var_dump(taxonomy_get_term_by_name('abdominal'));
+  foreach ($terms as $term) {
+    //var_dump($term[0]);
+    $termArray = taxonomy_get_term_by_name($term[0]);
+    //var_dump($termArray);
+    if (isset($termArray)) {
+      foreach ($termArray as $termItem) {
+        taxonomy_term_delete($termItem->tid);
+      }
+    }
+  }
+
+  // Next, delete terms from the three main vocabs which are not on whitelists
+  $vocabs = array();
+  $vocabs[] = array('tags','job_terms.csv');
+  $vocabs[] = array('content_categories','content_terms.csv');
+  $vocabs[] = array('additional_content_categories','addl_content_terms.csv');
+
+  foreach ($vocabs as $vocab) {
+    var_dump($vocab);
+    $vid = taxonomy_vocabulary_machine_name_load($vocab[0])->vid;
+    $terms = array();
+    //var_dump($vid);
+    $file = fopen(DRUPAL_ROOT.'/sites/atdove.org/modules/jeff_import/'.$vocab[1],'r');
+    while(!feof($file))
+    {
+      $terms[] = (fgetcsv($file));
+    }
+    fclose($file);
+    foreach ($terms as $key=>$term) {
+      $terms[$key] = strtolower($term[0]);
+      //var_dump($term);
+    }
+    var_dump('--- WHITELISTED TERMS ---');
+    var_dump($terms);
+    $tree = taxonomy_get_tree($vid,0,NULL);
+    foreach ($tree as $leaf) {
+      if (!in_array(strtolower($leaf->name),$terms)) {
+        var_dump($leaf->name.' is not in this vocab, deleting now');
+        taxonomy_term_delete($leaf->tid);
+      }
+      else {
+        var_dump($leaf->name.' IS IN THIS VOCAB');
+      }
+    }
+  }
+
+
+}
+
+/**
+ * Implements hook_menu().
+ */
+function jeff_import_test_results() {
+$batch = array(
+  'operations' => array(
+    array('jeff_import_test_results_processes',array())
+  ),
+  'finished' => 'jeff_import_test_results_finished',
+  'title' => t('Import Test Results'),
+  'init_message' => t('Import is starting'),
+  'progress_message' => t('Processed some out of total'),
+  'error_message' => t('Import had an error'),
+);
+  batch_set($batch);
+  batch_process('node/1');
+}
+
+function jeff_import_test_results_processes(&$context) {
+  $num_operations = 200;
+  watchdog('jeff_import','starting batch import',array());
+  if (!isset($result_count)) {
+    $result_count = 625; // the first record_id in the imported data
+  }
+  $result_count = $result_count + $num_operations;
+  $operations = array();
+  if (empty($context['sandbox'])) {
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['current_node'] = 0;
+    $context['sandbox']['max'] = db_query('SELECT COUNT(DISTINCT recordID) FROM {swt_testResult_data}')->fetchField();
+  }
+  $result = db_query("SELECT * FROM {swt_testResult_data} WHERE recordID < ".$result_count." AND recordID > ".($result_count-$num_operations));
+  if ($result) {
+    while ($row = $result->fetchAssoc()) {
+      if (isset($row['createdBy']) && isset($row['test_id']))
+        $user = user_load_by_name($row['createdBy']);
+      if (isset($user->uid)) {
+        $uuid = $row['test_id'];
+        $nodequery = "SELECT nid from node WHERE node.uuid ='".$uuid."'";
+        $noderesult = db_query($nodequery);
+        while ($noderow = $noderesult->fetchAssoc()) {
+          $nid = $noderow['nid'];
+        }
+        $vid = $nid;
+        $uid = $user->uid;
+        //$time_start = $row['created']-60;
+        $time_end = strtotime($row['created']);
+        $time_start = $time_end-60;
+        $score = $row['score'];
+        $insert = "INSERT INTO quiz_node_results (nid,vid,uid,time_start,time_end,score,is_evaluated) VALUES(".$nid.",".$vid.",".$uid.",".$time_start.",".$time_end.",".$score.",1)";
+        $insert_result = db_query($insert);
+        $operations[] = array(
+          'jeff_import_test_result',
+          array(t('(Operation @operation)', array('@operation' => $nid))),
+        );
+        $context['results'][] = $nid;
+        $context['sandbox']['progress']++;
+        $context['sandbox']['current_node'] = $nid;
+        $context['message'] = 'imported another result';
+      }
+    }
+  }
+  $context['results'][] = 'yay a batch';
+  $context['message'] = 'yup';
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+}
+
+function jeff_import_test_results_finished() {
+  return 'It is done';
+}
+
+function jeff_import_article_images() {
+  $result = db_query("SELECT * FROM {field_data_body} WHERE body_value LIKE '%/images/Article-Images%'");
+  if ($result) {
+    while ($row = $result->fetchAssoc()) {
+      $body = ($row['body_value']);
+      $body = str_replace('/images/Article-Images/','/sites/atdove.org/files/article-images/',$body);
+      if (!strpos($row['body_value'],'Management of Intestinal Evisceration')) {
+        $subquery = db_query("UPDATE field_data_body SET body_value= QUOTE('" . $body . "') WHERE revision_id =" . $row['revision_id']);
+      }
+    }
+  }
+
+  return 'hey yeah';
+}
+
+function strip_resource_id($string) {
+  if (strpos($string,'record')) {
+    $string = preg_replace('/[^:]+:[^:]+:/','',$string);
+    $string = preg_replace('/([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})/','$1-$2-$3-$4-$5',$string);
+  }
+  return $string;
+}
+
+function jeff_import_user_roles() {
+  $file = fopen(DRUPAL_ROOT.'/sites/atdove.org/modules/jeff_import/swt_people-orgs.csv', 'r');
+  $terms = array();
+  while(!feof($file))
+  {
+    $terms[] = (fgetcsv($file));
+  }
+  //var_dump ($terms);
+  fclose($file);
+  // $term[1] is user guid, $term[5] is org guid, $term[6] is role
+  $count = 0;
+  foreach ($terms as $term) {
+    if(!empty($term[1]) && !empty($term[5]) && !empty($term[6])) {
+      $uid = get_entity_id($term[1])['entity_id'];
+      $org_id = get_entity_id($term[5])['entity_id'];
+      $rid = return_role_id($term[6]);
+      if (is_numeric($rid) && is_numeric($uid) && is_numeric($org_id)) {
+        //var_dump($uid.' is a '.$rid.' of org '.$org_id);
+        add_to_table($uid,$org_id,$rid);
+      }
+      $count++;
+      //if ($count == 10) {break;}
+    }
+  }
+  return 'all done with '.$count.' inserts';
+}
+
+function return_role_id($role) {
+  if ($role == 'Administrator') {return 3;}
+  elseif ($role == 'Member') {return 2;}
+  else {return NULL;}
+}
+
+function get_entity_id($guid) {
+  $value = db_select('feeds_item','i')
+    ->fields('i',array('entity_id'))
+    ->condition('guid',$guid,'=')
+    ->execute()
+    ->fetchAssoc();
+  return $value;
+}
+
+function add_to_table($uid,$org_id,$rid) {
+  $check = db_select('og_users_roles','o')
+    ->fields('o',array('uid'))
+    ->condition('uid',$uid,'=')
+    ->condition('rid',$rid,'=')
+    ->condition('gid',$org_id,'=')
+    ->execute()
+    ->fetchAssoc();
+
+  if (empty($check)) {
+    db_insert('og_users_roles')
+      ->fields(array(
+        'uid' => $uid,
+        'rid' => $rid,
+        'gid' => $org_id,
+        'group_type' => 'node'
+      ))
+      ->execute();
+  }
+  else {
+    var_dump ('already in system');
+  }
+}
+
+/**
+ * Implements hook_menu().
+ */
+function jeff_import_assignments() {
+  $nodes = db_query("select nid from node as n where n.type = 'assignment' and n.uid=0 limit 800;");
+  foreach ($nodes as $node) {
+    $guid = db_query("select guid from feeds_item where entity_id=" . $node->nid . ";")->fetch();
+    $id = preg_replace('/([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})/', '$1-$2-$3-$4-$5', $guid->guid);
+    $createdBy = db_query("select createdBy from swt_assignment_data where id='" . $id . "';")->fetch();
+    //var_dump($createdBy->createdBy);
+    $user = user_load_by_name($createdBy->createdBy);
+    //var_dump($user->uid);
+    if (isset($user->uid) && isset($node->nid)) {
+      $fix = db_query("update node set uid = " . $user->uid . " where nid = " . $node->nid . ";");
+    }
+    elseif (!(isset($user))) {
+      dpm ($createdBy);
+      //$fix = db_query("update node set uid = 1 where nid = " . $node->nid . ";");
+    }
+    else {
+      dpm ($node);
+      dpm ($createdBy);
+    }
+  }
+  watchdog('jeff_import','added uid to 800 assignments');
+  return "Completed run";
+}
+
+/**
+ * Implements hook_cron().
+ */
+function jeff_import_cron() {
+  jeff_import_assignments();
+}
+
+function atdove_import_user_1() {
+  global $user;
+  if ($user->uid == 1) {return TRUE;}
+  return FALSE;
+}

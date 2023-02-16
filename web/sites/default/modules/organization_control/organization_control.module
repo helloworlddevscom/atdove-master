@@ -1,0 +1,2354 @@
+<?php
+
+/**
+ * @file organizational_control.module
+ * This module provides helper functions, hooks, security checks, and access control specific to atDove's specs
+ */
+
+ /*
+ * Module Info and Help
+ */
+function organization_control_info() {
+  return t('This module provides helper functions, hooks, security checks, and access control specific to atDove\'s specs');
+}
+
+
+/**
+ * Implements hook_menu(). (Routing)
+ */
+function organization_control_menu() {
+  $items = array();
+  $items['member/autocomplete'] = array(
+    'title' => 'Member autocomplete',
+    'page callback' => 'member_autocomplete',
+    'access callback' => 'user_access',
+    'access arguments' => array('access user profiles'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['memberfn/autocomplete'] = array(
+    'title' => 'Member FN autocomplete',
+    'page callback' => 'member_fn_autocomplete',
+    'access callback' => 'user_access',
+    'access arguments' => array('access user profiles'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['mymembers/autocomplete'] = array(
+    'title' => 'Managed Member autocomplete',
+    'page callback' => 'group_people_autocomplete',
+    'access callback' => 'user_access',
+    'access arguments' => array('access user profiles'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['group/autocomplete'] = array(
+    'title' => 'Group autocomplete',
+    'page callback' => 'group_autocomplete',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['orggroup/autocomplete'] = array(
+    'title' => 'My Groups autocomplete',
+    'page callback' => 'orggroups_autocomplete',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['contributor/autocomplete'] = array(
+    'title' => 'Contributor autocomplete',
+    'page callback' => 'contributor_autocomplete',
+    'access callback' => 'user_access',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/orggroup/autocomplete'] = array(
+    'title' => 'Organization Title Autocomplete',
+    'page callback' => 'organization_control_admin_orgname_autocomplete',
+    'access callback' => 'user_access',
+    'access arguments' => array('access all organizations'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/groups/add'] = array(
+    'title' => 'Create a Subgroup',
+    'page callback' => 'organization_control_create_subgroup_content',
+    'access callback' => 'user_access',
+    'access arguments' => array('create organizational_groups content'),
+  );
+  $items['my-organization/groups/delete/%'] = array(
+    'page callback' => 'organization_control_delete_subgroup_content',
+    'page arguments' => array(3),
+    'access callback' => 'organization_control_is_group_admin_by_subgroup',
+    'access arguments' => array(3),
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/groups/rename/%'] = array(
+    'page callback' => 'organization_control_rename_subgroup_content',
+    'page arguments' => array(3),
+    'access callback' => 'organization_control_is_group_admin_by_subgroup',
+    'access arguments' => array(3),
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-organization/groups/invite'] = array(
+    'title' => 'Invite New Users',
+    'page callback' => 'organization_control_invite_users_page',
+    'access callback' => 'organization_control_invite_users_perm',
+  );
+  $items['my-organization/edit'] = array(
+    'title' => 'Edit Organization Details',
+    'page callback' => 'organization_control_org_edit_page',
+    'access callback' => 'organization_control_org_edit_perm',
+  );
+  $items['my-organization/view'] = array(
+    'title' => 'View Organization Details',
+    'page callback' => 'organization_control_org_view_page',
+    'access callback' => 'organization_control_org_view_perm',
+  );
+  $items['admin/organization/overview/%'] = array(
+    'title' => 'View Organization Admin Overview',
+    'page callback' => 'organization_control_admin_org_overview_page',
+    'page arguments' => array(3),
+    'access callback' => 'organization_control_user_has_role',
+    'access arguments' => array('administrator'),
+  );
+  return $items;
+}
+
+/*
+ * Custom permissions needed for this module
+*/
+function organization_control_permission(){
+  return array(
+    'access all organizations' => array(
+      'title' => t('Access all organizations'),
+      'description' => t('Administration permissions to allow an admin to access all organizations.'),
+    ),
+    'edit_any_organization' => array(
+      'title' => t('Edit any organizations'),
+      'description' => t('Administration permissions to allow an admin to edit any organizations or organizational group.'),
+    ),
+    'delete_organizations' => array(
+      'title' => t('Delete any organizations'),
+      'description' => t('Administration permissions to allow an admin to delete an organizations or organizational group.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu_alter().
+ *
+ * Allows us to mod some menu items created by contrib modules.
+ */
+function organization_control_menu_alter(&$items) {
+  $items['group/%/%/admin/people/add-user']['type'] = MENU_CALLBACK;
+}
+
+/*
+ * provide a blocks
+ */
+function organization_control_block_info(){
+  $blocks = array();
+  $blocks['select-group'] = array(
+    'info' => t('Select Your Group'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  $blocks['select-admin-group'] = array(
+    'info' => t('Select Your Group - Admin'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  $blocks['group-admin-actions'] = array(
+    'info' => t('Group Actions- Admin'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  $blocks['create-group'] = array(
+    'info' => t('Create a New Group for your Organization - Admin'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  $blocks['seat-utilization'] = array(
+    'info' => t('Display how many seats an organization is utilizing'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  return $blocks;
+}
+
+/*
+ * provide block details
+ */
+function organization_control_block_view($delta = ''){
+  $block = array();
+  switch ($delta) {
+    case 'select-group':
+      $block['subject'] = '';
+      $block['content'] = _select_group_block_content();
+    break;
+    case 'select-admin-group':
+      $block['subject'] = '';
+      $block['content'] = _select_group_admin_block_content();
+    break;
+    case 'group-admin-actions':
+      $block['subject'] = '';
+      $block['content'] = _group_admin_action_block_content();
+    break;
+    case 'create-group':
+      $block['subject'] = '';
+      $block['content'] = organization_control_create_subgroup_content();
+    break;
+    case 'seat-utilization':
+      $block['subject'] = '';
+      $block['content'] = organization_control_seat_utilization();
+    break;
+  }
+  return $block;
+}
+
+/**
+ * Block visibility callback for the admin group management block.
+ *
+ * @param object $block
+ *   The block object.
+ *
+ * @return bool
+ *   TRUE if the block should be displayed on the current page.
+ */
+// function _bid_121_block_visibility($block) {
+//   //Some of these page are contextual
+//     people/community/*
+//     group/node/*/admin/people/invite
+//     group/node/*/admin/people
+//     group/node/*/admin/people/add-user
+//     my-organization/groups/manage/*
+//
+// }
+
+/*
+ * Get current user's group subscriber uid
+ */
+function organization_control_subscriber_uid($acct = null){
+  //if a user was not passed, use the current user
+  if($acct == null){
+    global $user;
+    $acct = $user;
+  }
+  //make sure the full user is loaded
+  $acct = user_load($acct->uid);
+
+  //The subscriber could be the current user or anyone in their group.
+  //The subscriber is suppose to have the role 'Group Subscriber' but we won't rely on that complete
+  //Find the current group
+  if(!isset($acct->og_user_node['und'][0]['target_id']) || !is_numeric($acct->og_user_node['und'][0]['target_id']) || $acct->og_user_node['und'][0]['target_id']==0){
+    //not in an org
+    return false;
+  }
+
+  //The current organization is
+  $orgID = $acct->og_user_node['und'][0]['target_id'];
+  //for all group members, see if any have an active license
+    //The current organization is
+    $orgID = $acct->og_user_node['und'][0]['target_id'];
+    //get group subscriber
+    $query = db_select('og_membership', 'ogm');
+    $query->fields('ogm',array('etid'));
+    $query->condition('ogm.state', 1);
+    $query->condition('ogm.entity_type', 'user');
+    $query->condition('ogm.field_name', 'og_user_node');
+    $query->condition('ogm.group_type', 'node');
+    $query->condition('ogm.gid', $orgID);
+    $query->join('users_roles','r','r.uid = ogm.etid AND r.rid = 10');
+    $results = $query->execute();
+    $result = $results->fetchAssoc();
+    //if the query failed
+    if($results == false){
+      return false;
+    }
+    //otherwise return the subscribers ID
+    else{
+      return $result['etid'];
+    }
+}
+
+/*
+ * Get current user's group subscriber uid
+ */
+function organization_control_subscriber_uid_by_gid($gid){
+  //get group subscriber
+  $query = db_select('og_membership', 'ogm');
+  $query->fields('ogm',array('etid'));
+  $query->condition('ogm.state', 1);
+  $query->condition('ogm.entity_type', 'user');
+  $query->condition('ogm.field_name', 'og_user_node');
+  $query->condition('ogm.group_type', 'node');
+  $query->condition('ogm.gid', $gid);
+  $query->join('users_roles','r','r.uid = ogm.etid AND r.rid = 10');
+  $results = $query->execute();
+  $result = $results->fetchAssoc();
+  //if the query failed
+  if($results == false){
+    return false;
+  }
+  //otherwise return the subscribers ID
+  else{
+    return $result['etid'];
+  }
+}
+
+/*
+ * Get a user's subscription information.
+ * Returns:
+ *    false if no subscription was found
+ *    An array of info if a subscription was found.
+ */
+function organization_control_subscription_info($user = null){
+  //we test on this later.
+  $isGroupSubscriber = true;
+  //if a user was not passed, use the current user
+  if($user == null){
+    global $user;
+  }
+  //check who owns this groups subscription.
+  $sid = organization_control_subscriber_uid($user);
+  if($sid == false){
+    return false;
+  }
+  //use the sid instead of the user to look up the subscription.
+  else{
+    $subscriber = user_load($sid);
+  }
+  //get subscription info
+  $query = db_select('commerce_license', 'l');
+  $query->fields('l',array('license_id','product_id','expires'));
+  $query->fields('t',array('field_total_seats_value'));
+  $query->fields('d',array('commerce_license_duration_value'));
+  $query->addField('o', 'order_id', 'orderID');
+  $query->condition('l.status', COMMERCE_LICENSE_ACTIVE);
+  $query->condition('l.granted', time(),'<');
+  #5day grace period
+//lets no longer check expriation here. If its expired, then the license should be revoked.
+//  $query->condition('l.expires', strtotime('-5 day') ,'>');
+  $query->condition('l.uid', $subscriber->uid);
+  $query->join('field_data_field_additional_seats', 's','s.entity_id=l.product_id');
+  $query->join('field_data_field_total_seats', 't','t.entity_id=s.field_additional_seats_tid');
+  $query->join('field_data_commerce_license', 'lli','lli.commerce_license_target_id=l.license_id');
+  $query->join('commerce_line_item', 'li','li.line_item_id=lli.entity_id');
+  $query->join('commerce_order', 'o','o.order_id=li.order_id');
+  $query->join('field_data_commerce_license_duration', 'd','d.entity_id=l.product_id');
+  $results = $query->execute();
+  //Active licenses found.
+  $result = $results->fetchAssoc();
+  if($result == false){
+    return false;
+  }
+  //default the seat size to zero not blank
+  if(!isset($result['field_total_seats_value']) || $result['field_total_seats_value']==""){
+    $result['field_total_seats_value'] = 0;
+  }
+  $result['currentSubscriber'] = $subscriber;
+  if($user->uid == $sid){
+    $result['isCurrentSubscriber'] = true;
+  }
+  else{
+    $result['isCurrentSubscriber'] = false;
+  }
+
+  // change unix epoch value to user friendly label
+  if (isset($result['commerce_license_duration_value'])) {
+    $result['commerce_license_duration_value'] = $result['commerce_license_duration_value'] == 31536000 ? 'annual' : 'monthly';
+  }
+
+  $result['autorenew'] = false;
+  $result['online'] = false;
+
+  if(isset($result['license_id']) && $result['license_id']>0){
+    $query = db_select('commerce_order','o');
+    $query->fields('o',array('order_id'));
+    $query->condition('o.uid',$result['currentSubscriber']->uid);
+    $query->condition('o.type',"recurring");
+    $query->join('field_data_cl_billing_license','bl',"bl.cl_billing_license_target_id = ".$result['license_id']);
+    $query->join('commerce_line_item','li',"li.line_item_id = bl.entity_id AND	o.order_id = li.order_id");
+    $query->range(0,1);
+    $query->orderby('o.order_id','DESC');
+    $results = $query->execute();
+    while($r=$results->fetchAssoc()){
+      $result['online'] = true;
+      $subquery = db_select('field_data_cl_billing_cycle','bli');
+      $subquery->fields('bc',array('status'));
+      $subquery->join('cl_billing_cycle','bc','bc.billing_cycle_id = bli.cl_billing_cycle_target_id');
+      $subquery->condition('bli.entity_id',$r['order_id']);
+      $subresults = $subquery->execute();
+      while($sr=$subresults->fetchAssoc()){
+        if($sr['status']==1){
+          $result['autorenew'] = true;
+        }
+      }
+    }
+  }
+
+  return $result;
+}
+
+/*
+* Get a requested user's organization if they are in an active org.
+* Defaults to current user
+* returns:
+* FALSE - If the user in not in an org or the org is not active
+* OganizationID - If found.
+*/
+function organization_control_orgID($user = null){
+  //if a user was not passed, use the current user
+  if($user == null){
+    global $user;
+  }
+  //make sure the full user is loaded
+  if(isset($user->uid)) {
+    $subscriber = user_load($user->uid);
+  }
+  else {
+    return false;
+  }
+  //if the user is not in an organization than they can't have a subscription.
+  if(!isset($subscriber->og_user_node['und'][0]['target_id']) || $subscriber->og_user_node['und'][0]['target_id']==""){
+    return false;
+  }
+  return $subscriber->og_user_node['und'][0]['target_id'];
+}
+
+/*
+* There was a typo in this functions names. The function has been fixed.
+* This is an alias to that corrected function.
+* Some views and other drupal db stored code may use this misspelled func name.
+*/
+function organzation_control_orgID($user = null){
+  return organization_control_orgID($user);
+
+}
+
+/*
+* Just gets the title of this node. The drupal convention is to do a node_load but I hate to spend those resources loading the full obj
+*/
+function organization_control_orgName($orgID = null){
+  if($orgID == null){
+    $orgID = organization_control_orgID();
+  }
+  $query = db_select('node','n');
+  $query->fields('n',array('title'));
+  $query->condition('n.nid',$orgID);
+  $results = $query->execute();
+  if($results == false){
+    return false;
+  }
+  else{
+    $result = $results->fetchAssoc();
+    return $result['title'];
+  }
+}
+
+/*
+* There was a typo in this functions names. The function has been fixed.
+* This is an alias to that corrected function.
+* Some views and other drupal db stored code may use this misspelled func name.
+*/
+function organzation_control_orgName($orgID = null){
+  return organization_control_orgName($orgID);
+}
+
+/*
+ * Get the current group size
+ */
+function organization_control_organization_size($user = null){
+  //if a user was not passed, use the current user
+  if($user == null){
+    global $user;
+  }
+  //make sure the full user is loaded
+  $subscriber = user_load($user->uid);
+
+  $orgID = organization_control_orgID($subscriber);
+
+  $count = 0;
+  //get group count
+  $query = db_select('og_membership', 'ogm');
+  $query->fields('ogm',array('etid'));
+  $query->condition('ogm.state', 1);
+  $query->condition('ogm.entity_type', 'user');
+  $query->condition('ogm.field_name', 'og_user_node');
+  $query->condition('ogm.group_type', 'node');
+  $query->condition('ogm.gid', $orgID);
+  $query->condition('ogm.etid',1,'>');
+  $query->leftjoin('users_roles','r','r.uid = ogm.etid AND r.rid = 10');
+  $query->IsNull('r.rid');
+  $results = $query->execute();
+  if($results != false){
+    $result = $results->fetchAll();
+    $count += count($result);
+  }
+  //also count open invites to existing users.
+  $queryInvites = db_select('atdove_invites', 'i');
+  $queryInvites->fields('i',array('uid'));
+  $queryInvites->condition('i.gid', $orgID);
+  $queryInvites->condition('i.new_user', '0');
+  $queryInvites->condition('i.active', 1);
+  $resultsInvites = $queryInvites->execute();
+  if($resultsInvites != false){
+   $resultInvite = $resultsInvites->fetchAll();
+   $count += count($resultInvite);
+  }
+  //return false if we found no members
+  if($count == 0){
+    return false;
+  }
+  //otherwise return the count.
+  return $count;
+}
+
+
+/*
+ * See if this is an empty (new) organization
+ */
+function organization_control_is_organization_empty($orgID){
+  //get group count
+  $query = db_select('node', 'n');
+  $query->fields('n',array('nid'));
+  $query->condition('n.status', 1);
+  $query->condition('n.type', 'organization');
+  $query->condition('n.nid', $orgID);
+  $query->leftjoin('og_membership','ogm','n.nid=ogm.gid AND ogm.field_name=\'og_user_node\' AND entity_type=\'user\' AND ogm.id IS NULL');
+  $results = $query->execute();
+  if($results == false){
+    return false;
+  }
+  else{
+    $result = $results->fetchAll();
+    if(isset($result['nid']) && is_numeric($result['nid']) && $result['nid']>0){
+      return true;
+    }else{
+      return false;
+    }
+
+  }
+}
+
+
+#TODO in Hook Form ALTER
+/*
+ * Hook into default node creation ofr subgroup and block or modify.
+ * Typical users create these nodes only under cirucmstances like an OG role of group admin
+ */
+
+
+/*
+ * Security check - Don't allow members to be added if the count is reached.
+ */
+
+
+
+function organization_control_form_alter(&$form, &$form_state, $form_id){
+  // change autocomplete for contributors
+  if (isset($form['field_contributors'])) {
+    $form['field_contributors']['und']['#autocomplete_path'] = 'contributor/autocomplete';
+  }
+  //some adjustments to OG add to group forms
+  if($form_id == 'og_ui_add_users' || $form_id == '_og_invite_people_new_users_form'){
+    if($form_state['submitted']==false){
+      //This field determins group or subgroup. Based on point of entry it defaults to the correct value. So we will hide it.
+       if(isset($form['og_user']['field_name']['#type'])){
+         $form['og_user']['field_name']['#type']='hidden';
+       }
+       if(isset($form['og_invite_people']['field_name']['#type'])){
+         $form['og_invite_people']['field_name']['#type']='hidden';
+       }
+      if(isset( $form['og_invite_people']['state']['#type'])){
+         $form['og_invite_people']['state']['#type']='hidden';
+         $form['og_invite_people']['state']['#default_value']=1;
+      #default_value
+      }
+    }
+    //link to the add existing drupal member form.
+    if($form_id == '_og_invite_people_new_users_form'){
+
+      $form['existingUsers'] = array(
+        '#type' => 'markup',
+        '#markup' => '<p><a href="/group/node/'.organization_control_orgID().'/admin/people/add-user">Add Existing Users</a> To Your Organization</p>',
+        '#weight' => '-15'
+      );
+
+
+    }
+    //the username autocompletes by default to any system user.
+    //If adding to the org, don't autocomplete at all.
+    if(!isset($form['og_user']['field_name']['#value']) || $form['og_user']['field_name']['#value']!="og_user_node1"){
+      unset($form['og_user']['name']['#autocomplete_path']);
+    }
+    //if adding the a subgroup, autocomplete to only group members.
+    else{
+      $form['og_user']['name']['#autocomplete_path'] = "member/autocomplete";
+    }
+    //add our custom group size controls
+    $form["#validate"][] = 'organization_control_og_size_control_form_validate';
+    //lets provide some immediate feedback on groups size
+    $organization_control_organization_size = organization_control_organization_size();
+    $subscriptionInfo = organization_control_subscription_info();
+    $form['currentInfo'] = array(
+      '#type' => 'markup',
+      '#markup' => '<h1>Invite Users</h1><h3>Your organization is utilizing '.$organization_control_organization_size.' out of '.$subscriptionInfo['field_total_seats_value'].' seats.</span></h3>',
+      '#weight' => '-20'
+    );
+  }
+}
+
+/*
+* Allows use to modify some pre-built VBO functions, Such as on the group management pages.
+*/
+function organization_control_views_bulk_operations_form_alter(&$form, &$form_state, $form_id){
+  global $user;
+  //Some mods to VBO on Manage Group Members
+  if($form['#form_id'] == 'views_form_group_members_administration_page_1'){
+    if ($form_state['step'] == 'views_form_views_form') {
+      $form['select']['#title'] = "Perform The Following Action:";
+    }
+  }
+
+  //if action removing a user from the main team
+  if ( $form['#id'] == "views-form-organization-members-administration-page-1" && $form_state['step'] == 'views_bulk_operations_confirm_form' && $form_state['operation']->operationId == "action::organization_control_remove_from_group_action") {
+
+    //I just want the confirmation message to make more sense. But the only place in these arrays I can find that message is in rendered html.
+    //There must be somewhere else I am suppose to hook and modify this data but damn if I can find it.
+    $search = "/[^<h3>](.*)[^<\/h3>]/";
+    $replace = "You are removing the following users from your team:";
+    $form['description']['#markup'] = preg_replace('#('.preg_quote("<h3>").')(.*?)('.preg_quote("</h3>").')#si', '$1'.$replace.'$3', $form['description']['#markup']);
+
+    $search = " in group ";
+    $replace = " will no longer be a member of your team: ";
+    $form['description']['#markup'] = str_replace($search,$replace,$form['description']['#markup']);
+
+    $form['description']['#weight'] = "-10";
+
+    //adjust the styleing of the buttons and cancel link
+    $form['actions']['#weight'] = "0";
+    $form['actions']['submit']['#attributes']['class'][] = 'team_delete_submit';
+    $form['actions']['cancel']['#attributes']['class'][] = 'team_delete_submit';
+    $form['actions']['cancel']['#attributes']['class'][] = 'team_delete_cancel';
+
+    //we want to throw better warning on certain people or types of people. However the VBO only passes the membership ID. We will have to load it and do more analysis
+    $adminsSelected = array();
+    $selfSelected = false;
+    $orgID = organization_control_orgID($user);
+    $admins = organization_control_list_group_admins($orgID);
+    //I wish this array's keys were the uids also, it will make it easier to compare later.
+    $adminsForComparison = array();
+    foreach($admins as $admin){
+      $adminsForComparison[$admin] = $admin;
+    }
+    $totalAdminsSelected = 0;
+    //load the selected memberships
+    $memberships = og_membership_load_multiple($form_state['selection']);
+    //cycle through each
+    foreach($memberships as $m){
+      //is this an admin
+      if(in_array($m->etid, $adminsForComparison)){
+        $adminsSelected[$m->etid] = $m->etid;
+      }
+      //is this the current user
+      if($m->etid == $user->uid){
+        $selfSelected = true;
+      }
+     }
+    //warn if removing admins
+    if(count($adminsSelected)){
+      $form['description']['#markup'] .= "<div class='notice'>You are removing the following admins from your team. These admins will lose all access to this team and its management.<ul class='team_management_admin_selected'>";
+      foreach($adminsSelected as $auid){
+        $adminUser = user_load($auid);
+        //if first or last name were provided use that instead of the user name.
+        if( (isset($adminUser->field_first_name['und'][0]['value']) && $adminUser->field_first_name['und'][0]['value'] != "") || (isset($adminUser->field_last_name['und'][0]['value']) && $adminUser->field_last_name['und'][0]['value'] != "" ) ){
+          $adminName = $adminUser->field_first_name['und'][0]['value']." ".$adminUser->field_last_name['und'][0]['value'];
+        }
+        else{
+          $adminName = $adminUser->name;
+        }
+        $form['description']['#markup'] .= "<li>$adminName (".$adminUser->mail.")</li>";
+      }
+      $form['description']['#markup'] .="</ul></div>";
+    }
+
+    //warn if removing self
+    if($selfSelected == true){
+      $form['description']['#markup'] .= "<div class='notice'>You are removing yourself from your team. You will lose all access to this team and its management.</div>";
+    }
+
+    //warn if removing all admins.
+    ksort($adminsSelected);
+    ksort($adminsForComparison);
+    $adminDiff = array_diff($adminsForComparison,$adminsSelected);
+    if(count($adminDiff) == 0){
+      $form['description']['#markup'] .= "<div class='notice'>You are removing all administrators from your team. This will render your team unable to manage users and billing. There will be no future renewals for the current subscription.</div>";
+    }
+
+  }
+
+  //if action removing a user from the a sub group
+  if ( $form['#id'] == "views-form-group-members-administration-page-1" && $form_state['step'] == 'views_bulk_operations_confirm_form' && $form_state['operation']->operationId == "action::organization_control_remove_from_group_action") {
+    //I just want the confirmation message to make more sense. But the only place in these arrays I can find that message is in rendered html.
+    $search = "/[^<h3>](.*)[^<\/h3>]/";
+    $replace = "You are removing the following users from the given group:";
+    $form['description']['#markup'] = preg_replace('#('.preg_quote("<h3>").')(.*?)('.preg_quote("</h3>").')#si', '$1'.$replace.'$3', $form['description']['#markup']);
+    $form['description']['#weight'] = "-10";
+
+    //adjust the styleing of the buttons and cancel link
+    $form['actions']['#weight'] = "0";
+    $form['actions']['submit']['#attributes']['class'][] = 'group_delete_submit';
+    $form['actions']['cancel']['#attributes']['class'][] = 'group_delete_submit';
+    $form['actions']['cancel']['#attributes']['class'][] = 'group_delete_cancel';
+  }
+
+}
+
+
+/*
+* a new validation function added to the invite and manage forms to make sure the org size is within its limit.
+*/
+function organization_control_og_size_control_form_validate(&$form, &$form_state){
+  $organization_control_organization_size = organization_control_organization_size();
+  $subscriptionInfo = organization_control_subscription_info();
+  if($organization_control_organization_size >=  $subscriptionInfo['field_total_seats_value']){
+    form_set_error('edit-og-user', t('Your Organization has reached is current license size limit.'));
+  }
+}
+
+/*
+ *  Implements hook_og_membership_delete().
+ *
+ *  Add some useful logging messages
+ */
+function organization_control_og_membership_delete(OgMembership $og_membership){
+  $rmGroupNode = node_load($og_membership->gid);
+  $rmGroup = $rmGroupNode->title;
+  Global $user;
+  switch($og_membership->field_name){
+    case"og_user_node":
+      $rmUser = user_load($og_membership->etid);
+      $wd_message = "_og_membership_delete - $user->mail removed $rmUser->name from the team $rmGroup";
+    break;
+    case"og_user_node1":
+      $rmUser = user_load($og_membership->etid);
+      $wd_message = "_og_membership_delete - $user->mail removed $rmUser->name from the group $rmGroup";
+    break;
+    case"og_org_ref":
+      $rmSubGroup = node_load($og_membership->etid);
+      $wd_message = "_og_membership_delete - $user->mail removed the group $rmSubGroup->title from the Team $rmGroup";
+    break;
+    default:
+      $wd_message = "_og_membership_delete - $user->mail caused an unknown entity type ($og_membership->field_name with id $og_membership->etid) to be removed from $rmGroupNode->title ($og_membership->gid).";
+    break;
+  }
+  watchdog("organization_control",$wd_message,null,WATCHDOG_INFO);
+}
+
+/*
+ *  Implements hook_og_membership_presave().
+ *
+ *  This takes security a step further and instead of preventing the form from being submitted it actual stops the save too.
+ *  Though the form validate above should prevent this from ever running, its a fail safe.
+ */
+function organization_control_og_membership_presave(OgMembership $og_membership){
+
+  //load the current user
+  Global $user;
+  //innocent until proven guilty
+  $error = false;
+  //set some vars.
+  $orgID = organization_control_orgID();
+  $requestedGroup = $og_membership->gid;
+
+  //if the field name is og_user_node and og_user_node1 then the etid is a user
+  if($og_membership->field_name=='og_user_node' || $og_membership->field_name=='og_user_node1'){
+    //For og_user_node and og_user_node1
+    $newMember = user_load($og_membership->etid);
+    $requestManager = $user->uid;
+    //VALIDATE PERMISSIONS
+    //do not do this check if its a new user.
+    if($og_membership->field_name=='og_user_node1' && !isset($_SESSION['bypass_og'])){
+      //the newMember is in that main org
+      if(og_is_member('node',$orgID,'user',$newMember)==false){
+        drupal_set_message('There was an error verifying the new members permissions to this organization. Please contact an administrator.');
+        $errorMsg = "There was an error verifying the new members permissions to this organization. Please contact an administrator.";
+        $errorMsg2 = "ORGID = $orgID og_membership->etid = $og_membership->etid";
+        watchdog('organization_control',"_og_membership_presave - $errorMsg2",null,WATCHDOG_ERROR);
+        $error = true;
+      }
+      //The requested group is a group of the main org.
+      if(og_is_member('node',$orgID,'node',node_load($requestedGroup))==false){
+        drupal_set_message('There was an error verifying the subgroup belongs to this organization. Please contact an administrator.');
+        $errorMsg = "There was an error verifying the subgroup belongs to this organization. Please contact an administrator.";
+        $error = true;
+      }
+
+      //the requestManager has permission (either by role or ownership)
+      if(organization_control_is_group_admin_by_subgroup($requestedGroup,$requestManager) == FALSE){
+        drupal_set_message('There was an error verifying your permissions to add to this organization. Please contact an administrator.');
+        $errorMsg = "There was an error verifying your permissions to add to this organization. Please contact an administrator.";
+        $error = true;
+      }
+    }
+
+    //find the current users group limit
+    $subscriptionInfo = organization_control_subscription_info();
+    $organization_control_organization_size = organization_control_organization_size();
+    //find the current usage
+    //When the group is first made the $user is anonyomous but the organization node creator is assigned to the order owner.
+    //We need a way for this to pass. - if the group is not owned by anyone allow it?
+    if($organization_control_organization_size >=  $subscriptionInfo['field_total_seats_value'] && organization_control_is_organization_empty($requestedGroup)=="false"){
+      $errorMsg = "Your Organization has reached is current license size limit (ps).";
+      $error = true;
+      drupal_set_message('Your Organization has reached is current license size limit (ps).');
+    }
+
+    if($og_membership->field_name=='og_user_node'){
+      $wd_message = "_og_membership_presave - OrgID: $orgID USER: $newMember->mail was added to the Team $requestedGroup by $user->mail";
+    }
+    elseif($og_membership->field_name=='og_user_node1'){
+      $wd_message = "_og_membership_presave - OrgID: $orgID USER: $newMember->mail was added to the group $requestedGroup by $user->mail";
+    }
+
+  }
+  elseif($og_membership->field_name=='og_org_ref'){
+    $newGroup = node_load($og_membership->etid);
+    $wd_message = "_og_membership_presave - OrgID: $orgID GROUP: $newGroup->title was added to the Team $requestedGroup by $user->mail";
+  }
+
+  if($error==true){
+    //log this error
+    watchdog('organization_control',"_og_membership_presave - $errorMsg",null,WATCHDOG_ERROR);
+    //We need to know the group ID to redirect to
+    global $user;
+    //make sure the full user is loaded
+    $user = user_load($user->uid);
+    //The current organization is
+    if(isset($user->og_user_node['und'][0]['target_id'])){
+      $orgID = $user->og_user_node['und'][0]['target_id'];
+      //drupal_goto('/group/node/'.$orgID.'/admin/people/add-user'); // Why were we sending people to an admin page?
+      drupal_goto('/my-organization/invite-users');
+    }
+    else{
+      drupal_goto('/');
+    }
+  }
+  else {
+    watchdog("organization_control",$wd_message,null,WATCHDOG_INFO);
+  }
+}
+
+/*
+* I am surprised OG doesn't have a function like this. I can't find it.
+*
+* Does the user have admin permissions to mod the group (creating sub group)
+#TODO Should this also confirm the license? (organization_control_subscription_info())
+* Returns: TRUE or FALSE
+*/
+function organization_control_is_group_admin($gid,$uid=null){
+  if($uid==null){
+    Global $user;
+    $uid = $user->uid;
+  }
+  //a previous function for gids returns false which was interupted in the query below as 1. This is a sanity check on that, and for safe measure it checks other things too
+  if(is_null($gid) || $gid==0 || $gid==1 || $gid==""){
+    return false;
+  }
+
+  //permission by role
+    $query = db_select('og_users_roles', 'og');
+    $query->condition('gid', $gid, '=');
+    $query->condition('uid', $uid, '=');
+    $query->distinct();
+    $query->fields('og', array('rid'));
+    $result = $query->execute();
+    if($result->rowCount()){
+      while($r = $result->fetchAssoc()){
+        if ($r['rid'] == 3 || $r['rid'] == 6) {
+          return true;
+        }
+      }
+    }else{
+      return false;
+    }
+
+  //Permission by ownership
+    $query = db_select('node', 'n');
+    $query->condition('nid', $gid, '=');
+    $query->distinct();
+    $query->fields('n', array('uid'));
+    $result = $query->execute();
+    $node_uid = $result->fetchAssoc();
+    if ($node_uid['uid'] == $uid) {
+      return true;
+    }
+    return false;
+}
+
+function organization_control_is_group_admin_by_subgroup($gid,$uid=null){
+  if(!isset($gid) || !is_numeric($gid) || $gid==0){
+    return false;
+  }
+  //find the parent
+  $query = db_select('og_membership','m');
+  $query->condition('m.entity_type','node');
+  $query->condition('m.field_name','og_org_ref');
+  $query->condition('m.etid',$gid);
+  $query->condition('m.entity_type','node');
+  $query->fields('m',array('gid'));
+  $results = $query->execute();
+  $r = $results->fetchAssoc();
+  $pgid = $r['gid'];
+  if(!isset($pgid) || !is_numeric($pgid) || $pgid==0){
+    return false;
+  }
+  return organization_control_is_group_admin($pgid,$uid);
+}
+
+function organization_control_list_group_admins($gid) {
+  $query = db_select('og_membership','m');
+  $query->join('og_users_roles','r','m.etid=r.uid');
+  $query->leftjoin('users_roles','ur','ur.uid=r.uid AND ur.rid=10');
+  $query->IsNull('ur.rid');
+  $query->condition('m.gid',$gid,'=');
+  $query->condition('m.field_name',array('og_user_node','og_user_node1'),'IN');
+  $query->condition('r.rid',3,'=');
+  $query->fields('m',array('etid'));
+  $results = $query->execute();
+  $admins = array();
+  while ($result = $results->fetchAssoc()) {
+    $admins[]=$result['etid'];
+  }
+  return($admins);
+}
+
+function organization_control_list_group_admin_emails($gid) {
+  $query = db_select('og_membership','m');
+  $query->join('og_users_roles','r','m.etid=r.uid');
+  $query->leftjoin('users_roles','ur','ur.uid=r.uid AND ur.rid=10');
+  $query->IsNull('ur.rid');
+  $query->join('users','u','u.uid=m.etid');
+  $query->condition('m.gid',$gid,'=');
+  $query->condition('m.field_name',array('og_user_node','og_user_node1'),'IN');
+  $query->condition('r.rid',3,'=');
+  $query->fields('u',array('mail'));
+  $results = $query->execute();
+  $admins = array();
+  while ($result = $results->fetchAssoc()) {
+    $admins[]=$result['mail'];
+  }
+  return($admins);
+}
+
+function organization_control_list_group_admin_email_single_random($gid) {
+  $query = db_select('og_membership','m');
+  $query->join('og_users_roles','r','m.etid=r.uid');
+  $query->leftjoin('users_roles','ur','ur.uid=r.uid AND ur.rid=10');
+  $query->IsNull('ur.rid');
+  $query->join('users','u','u.uid=m.etid');
+  $query->condition('m.gid',$gid,'=');
+  $query->condition('m.field_name',array('og_user_node','og_user_node1'),'IN');
+  $query->condition('r.rid',3,'=');
+  $query->condition('u.uid',1,'>');
+  $query->condition('u.mail','admin@example.com','<>');
+  $query->fields('u',array('mail'));
+  $query->orderBy('u.created', 'DESC');
+  $query->range(0,1);
+  $results = $query->execute();
+  $admins = array();
+  $result = $results->fetchAssoc();
+  $admin=$result['mail'];
+  return($admin);
+}
+
+/*
+* Does the user have admin permissions to any active the group
+#TODO Should this also confirm the license?  (organization_control_subscription_info())
+* Returns: TRUE or FALSE
+*/
+function organization_control_is_any_admin($uid=null){
+  if($uid==null){
+    Global $user;
+    $uid = $user->uid;
+  }
+  //permission by role
+    $query = db_select('og_users_roles', 'og');
+    $query->condition('uid', $uid, '=');
+    $query->distinct();
+    $query->fields('og', array('rid'));
+    $result = $query->execute();
+    if($result->rowCount()){
+      while($r = $result->fetchAssoc()){
+        if ($r['rid'] == 3 || $r['rid'] == 6) {
+          return true;
+        }
+      }
+    }else{
+      return false;
+    }
+    return false;
+}
+
+/**
+ * Menu callback to redirect user the the proper OG invite path (that includes a dynamic gid
+ * This is the access callback to make sure the user has permission
+ */
+function organization_control_invite_users_perm(){
+  Global $user;
+  $currOrg = organization_control_orgID($user);
+  if(organization_control_is_group_admin($currOrg,$user->uid)){
+    return true;
+  }
+  return false;
+}
+/**
+ * Menu callback to redirect user the the proper OG invite path (that includes a dynamic gid
+ */
+function organization_control_invite_users_page(){
+  $currOrg = organization_control_orgID();
+  drupal_goto("/group/node/".$currOrg."/admin/people/invite");
+}
+
+/**
+ * Menu callback to redirect user the the proper OG invite path (that includes a dynamic gid
+ * This is the access callback to make sure the user has permission
+ */
+function organization_control_org_edit_perm(){
+  Global $user;
+  $currOrg = organization_control_orgID($user);
+  if(organization_control_is_group_admin($currOrg,$user->uid)){
+    return true;
+  }
+  return false;
+}
+/**
+ * Menu callback to redirect user the the proper OG invite path (that includes a dynamic gid
+ */
+function organization_control_org_edit_page(){
+  $currOrg = organization_control_orgID();
+  drupal_goto("/node/".$currOrg."/edit");
+}
+
+/**
+ * Menu callback to redirect user the the proper OG group page (includes a dynamic gid)
+ * This is the access callback to make sure the user has permission
+ */
+function organization_control_org_view_perm(){
+  Global $user;
+  $currOrg = organization_control_orgID($user);
+  if(organization_control_is_group_admin($currOrg,$user->uid)){
+    return true;
+  }
+  return false;
+}
+/**
+ * Menu callback to redirect user the the proper OG group page (includes a dynamic gid)
+ */
+function organization_control_org_view_page(){
+  $currOrg = organization_control_orgID();
+  drupal_goto("/node/".$currOrg."/");
+}
+
+/**
+ * Menu callback for Drupal and Dove Lewis admins to view global information about an org to assign in debug and customer support
+ */
+function organization_control_admin_org_overview_page($orgID = null){
+  $output = array();
+  $output['header'] = array(
+    '#type' => 'markup',
+    '#markup' => "<h1>Administrator Team Overview<h1><h2>".organization_control_orgName($orgID)." (".$orgID.")</h2><p><a href='/admin/organization-dashboard/".$orgID."'>View All Members</a><br /><a href='/admin/organization-dashboard'>View All Teams</a></p>",
+  );
+
+  //Look up BUID
+  $buidOutput = "<h3>Billing User</h3><p>";
+  $buid = dl_billing_management_get_billing_user_by_gid($orgID);
+  if($buid==false){
+    $buidOutput .= "<strong>No Billing User Found</strong>";
+  }
+  else{
+    $b_user = user_load($buid);
+    $buidOutput .= "<strong>UID:</strong> ".$buid." <br /><strong>Username:</strong> ".$b_user->name."<br />";
+  }
+  //This function returns a single BUID because its assumed but since this is a debug page. Confirm
+  $buids = array();
+  $query = db_select('og_membership','m');
+  $query->fields("m", array("etid"));
+  $query->condition("m.gid", $orgID, "=");
+  $query->condition("m.entity_type", 'user', "=");
+  $query->join('users_roles','r','r.uid=m.etid and r.rid=10');
+  $results = $query->execute();
+  if($results->rowCount()>1){
+  //multiple billing user error
+    $buidOutput .= "<strong>**WARNING** More than one Billing User found. Contact the Webmaster</strong><br /><ul>";
+    while($r = $results->fetchAssoc()){
+      $buidOutput .= "<li>".$r['etid']."</li>";
+    }
+    $buidOutput .= "</ul>";
+  }
+  $buidOutput .= "</p>";
+
+  if($buid!=false){
+    //Subscription Info
+    $subscription_info = organization_control_subscription_info($b_user);
+    if($subscription_info == false){
+      $subscription_info_status = "Inactive";
+    }else{
+      $subscription_info_status = "Active";
+    }
+    $subscriptionOutput = "
+      <h3>License Status</h3><p><strong>".$subscription_info_status."</strong></p>
+    ";
+    if($subscription_info_status=='Active'){
+      $subscriptionOutput .= "
+        <h4>License Details</h4>
+        <ul>
+      ";
+//       $subscriptionOutput .= "
+//           <li>License ID: ".$subscription_info['license_id']."</li>
+//           <li>Order ID: ".$subscription_info['orderID']."</li>
+//       ";
+      $subscriptionOutput .= "
+          <li>Expires: ".date("M d Y",$subscription_info['expires'])."</li>
+          <li>Total Seats: ".$subscription_info['field_total_seats_value']."</li>
+          <li>Billing Cycle: ".$subscription_info['commerce_license_duration_value']."</li>
+          <li>Autorenew: ";  $subscriptionOutput .= $subscription_info['autorenew']==true ? "True" : "False"; $subscriptionOutput .= "</li>
+          <li>Online: ";  $subscriptionOutput .= $subscription_info['online']==true ? "True" : "False"; $subscriptionOutput .= "</li>
+        </ul>
+      ";
+    }
+    $output['subscription'] = array(
+      '#type' => 'markup',
+      '#markup' => $subscriptionOutput,
+    );
+
+    //Card on File stuff
+    $cofOutput = "<h3>Card On File Information</h3><p><strong>Warning:</strong> Currently if you modify a Card on File it redirects you away from here and to an inproper page. The redirection is because it assumes the Team Admin is modifying the card on file and not a Dove Lewis admin. This is known and will be addressed.</p>";
+    $cofOutput .= views_embed_view('commerce_card_on_file_user_cards', 'block_2');
+    $output['cof'] = array(
+      '#type' => 'markup',
+      '#markup' => $cofOutput,
+    );
+
+    $output['cofAdd'] = array(
+      '#type' => 'markup',
+      '#markup' => l(t('Add a New Credit Card'),'user/'.$buid.'/cards/add/Zv86GX2I2DTeXevedUYrgtg4gSjSQkQQ3m-N9VUGfd4'),
+      '#prefix' => '<p>',
+      '#suffix' => '</p>',
+    );
+
+    //Was there an offline order
+    if($subscription_info_status=='Active' && $subscription_info['online']==true){
+      $output['changeplan'] = array(
+        '#type' => 'markup',
+        '#markup' => t("Change License"),
+        '#prefix' => '<h3>',
+        '#suffix' => '</h3>',
+      );
+      $output['dl_billing_management_change_plan_form'] = drupal_get_form('dl_billing_management_change_plan_form',$subscription_info['orderID']);
+    }
+
+    //The BUID info was compiled above but output here.
+    $output['buid'] = array(
+      '#type' => 'markup',
+      '#markup' => $buidOutput,
+    );
+
+    //output views of the orders
+/*
+    $ordersOutput = "<h4>Orders</h4>";
+    $ordersOutput .= views_embed_view('commerce_user_orders', 'block_1');
+    $output['ordersOutput'] = array(
+      '#type' => 'markup',
+      '#markup' => $ordersOutput,
+    );
+
+
+  //track reported items
+  $reportedItems['recurrring_orders'] = array();
+  $reportedItems['license_orders'] = array();
+  $reportedItems['billingcycles'] = array();
+  $reportedItems['licenses'] = array();
+
+  //was there a recurring order
+  $rOutput= "<h3>Recurring Order Info</h3><p>";
+  $rquery = db_select('commerce_order','o');
+  $rquery->condition('o.status','recurring_open');
+  $rquery->condition('o.type','recurring');
+  $rquery->condition('o.uid',$buid);
+  $rquery->fields('o',array('order_id'));
+  $rresults = $rquery->execute();
+  //were there more than one
+  if($rresults->rowCount()>1){
+    $rOutput .= "<strong>**WARNING** More than one open recurring order found. This is odd! Contact the webmaster.</strong><br />";
+  }
+  while($rr = $rresults->fetchAssoc()){
+    $reportedItems['recurrring_orders'][$rr['order_id']] = $rr['order_id'];
+    $rOutput .= "<ul><li>Recurring Order ID: ".$rr['order_id']."</li>";
+    //also get its billing cycle
+    $r_bc_query=db_select('cl_billing_cycle','bc');
+    $r_bc_query->join('field_data_cl_billing_cycle','fbc','fbc.cl_billing_cycle_target_id = bc.billing_cycle_id  AND fbc.entity_id ='.$rr['order_id']);
+    $r_bc_query->fields('bc',array('billing_cycle_id','status','end'));
+    $r_bc_results = $r_bc_query->execute();
+
+    if($r_bc_results->rowCount()>1){
+      $rOutput .= "<strong>**WARNING** More than one billing cycle found. This is odd! Contact the webmaster.</strong><br />";
+    }
+    while($r_bc = $r_bc_results->fetchAssoc()){
+      $reportedItems['billingcycles'][$r_bc['billing_cycle_id']] = $r_bc['billing_cycle_id'];
+      $rOutput .= "<li>Billing Cycle ID: " . $r_bc['billing_cycle_id'] ."</li>";
+      $rOutput .= "<li>Autorenew:  " . $r_bc['status'] ."</li>";
+      if($r_bc['status']==1){
+        $rOutput .= "<li>Renews On:  " . date("M d Y",$r_bc['end']) ."</li>";
+      }
+    }
+    //also get its license
+    $r_l_query=db_select('commerce_license','l');
+    $r_l_query->join('commerce_line_item','li','li.order_id = '.$rr['order_id']);
+    $r_l_query->join('field_data_cl_billing_license','fl','fl.entity_id = li.line_item_id AND fl.cl_billing_license_target_id = l.license_id');
+    $r_l_query->condition('l.status',2);
+    $r_l_query->fields('l',array('expires','license_id'));
+    $r_l_results = $r_l_query->execute();
+
+    if($r_l_results->rowCount()>1){
+      $rOutput .= "<strong>**WARNING** More than one license found. This is odd! Contact the webmaster.</strong><br />";
+    }
+    while($r_l = $r_l_results->fetchAssoc()){
+      $reportedItems['licenses'][$r_l['license_id']] = $r_l['license_id'];
+      $rOutput .= "<li>License ID: " . $r_l['license_id'] ."</li>";
+      $rOutput .= "<li>Expires:  " . date("M d Y",$r_l['expires']) ."</li>";
+      //also get its product order
+      $r_p_query=db_select('commerce_order','o');
+      $r_p_query->join('commerce_line_item','li','li.order_id = o.order_id');
+      $r_p_query->join('field_data_commerce_license','fl','fl.entity_id = li.line_item_id AND fl.commerce_license_target_id ='.$r_l['license_id']);
+      $r_p_query->fields('o',array('order_id'));
+      $r_p_results = $r_p_query->execute();
+      if($r_p_results->rowCount()>1){
+        $rOutput .= "<strong>**WARNING** More than one product order found. This is odd! Contact the webmaster.</strong><br />";
+      }
+      while($r_p = $r_p_results->fetchAssoc()){
+        $reportedItems['license_orders'][$r_p['order_id']] = $r_p['order_id'];
+        $rOutput .= "<li>License Order ID: " . $r_p['order_id'] ."</li>";
+      }
+    }
+    $rOutput .= "</ul>";
+  }
+*/
+  }//end if billing user
+
+  //Allow an org to use the Import Team Management Tool
+  $output['atdove_user_invitation_import_team_management_allowed_orgs_form'] = drupal_get_form('atdove_user_invitation_import_team_management_allowed_orgs_form',$orgID);
+
+  //Allow an org to Track Employee IDs
+  $output['atdove_user_invitation_employee_id_allowed_orgs_form'] = drupal_get_form('atdove_user_invitation_employee_id_allowed_orgs_form',$orgID);
+
+  $orderMsgOutput = "<h3>List of Open and Completed Orders</h3><p>Coming Soon</p>";
+  $output['orderMsg'] = array(
+    '#type' => 'markup',
+    '#markup' => $orderMsgOutput,
+  );
+/*
+  $rOutput .= "</p>";
+  $output['recurring'] = array(
+    '#type' => 'markup',
+    '#markup' => $rOutput,
+  );
+  //Was there an offline order
+  $oOutput = "<h3>Offline Order Lookups</h3><p>Coming Soon</p>";
+  $output['offline'] = array(
+    '#type' => 'markup',
+    '#markup' => $oOutput,
+  );
+  //gets its license
+  $o_l_Output = "<h3>Offline Order License Info</h3><p>Coming Soon</p>";
+  $output['o_license'] = array(
+    '#type' => 'markup',
+    '#markup' => $o_l_Output,
+  );
+
+  //are there other open licenses
+  //gets its license
+  $lOutput = "<h3>Debug - Confirm there are not multiple licenses of odd statuses and other clean up</h3><p>Coming Soon</p>";
+  $output['license'] = array(
+    '#type' => 'markup',
+    '#markup' => $lOutput,
+  );
+  //are there other open billing cycles
+  $bOutput = "<h3>Debug - Confirm there are not multiple Billing Cycles of odd statuses and other clean up</h3><p>Coming Soon</p>";
+  $output['bc'] = array(
+    '#type' => 'markup',
+    '#markup' => $bOutput,
+  );
+*/
+  //show a seat count
+  //are there other open billing cycles
+//   $scOutput = "<h3>Seat Count Info</h3><p>Coming Soon</p>";
+//   $output['sc'] = array(
+//     '#type' => 'markup',
+//     '#markup' => $scOutput,
+//   );
+  //get a list of admins
+  $aOutput = "<h3>List of Admins</h3><p>Coming Soon</p>";
+  $output['admins'] = array(
+    '#type' => 'markup',
+    '#markup' => $aOutput,
+  );
+  //daily grant access
+  $dgOutput = "<h3>Grant All Users Access For A Day</h3><p>Coming Soon</p>";
+  $output['dg'] = array(
+    '#type' => 'markup',
+    '#markup' => $dgOutput,
+  );
+  //daily revoke access
+  $drOutput = "<h3>Revoke All Users Access For A Day</h3><p>Coming Soon</p>";
+  $output['dr'] = array(
+    '#type' => 'markup',
+    '#markup' => $drOutput,
+  );
+  //cancel renewal
+  $cOutput = "<h3>Cancel Renewal</h3><p>Coming Soon</p>";
+  $output['cancel'] = array(
+    '#type' => 'markup',
+    '#markup' => $cOutput,
+  );
+
+  return $output;
+}
+
+/**
+ * Query user table to check if username  exists.
+ * Returns:
+ * 1 if user is found
+ * 0 if not
+ */
+function organization_control_username_check_exists($username) {
+  $results =  db_query("SELECT COUNT(u.name) count FROM {users} u WHERE LOWER(u.name) = LOWER(:username)", array(':username' => $username))->fetchField();
+  return $results;
+}
+
+/**
+ * Query user table to check if user's email  exists.
+ * Returns:
+ * 1 if user is found
+ * 0 if not
+ */
+function organization_control_mail_check_exists($mail) {
+  $results =  db_query("SELECT COUNT(u.mail) count FROM {users} u WHERE LOWER(u.mail) = LOWER(:mail)", array(':mail' => $mail))->fetchField();
+  return $results;
+}
+
+/**
+ * Menu callback; Retrieve a JSON object containing autocomplete suggestions for organization names
+ */
+function organization_control_admin_orgname_autocomplete($string = '') {
+  $matches = array();
+    $query = db_select('node');
+    $query->fields('node', array('title','nid'));
+    if ($string) {
+      $query->condition('node.title', db_like($string) . '%', 'LIKE');
+    }
+    $query->condition('node.type','organization','=');
+    $query->range(0, 10);
+    $results = $query->execute();
+    foreach ($results as $org) {
+      $email = organization_control_list_group_admin_email_single_random($org->nid);
+      $matches[check_plain($org->title) . " [$email] [gid:$org->nid]"] = check_plain($org->title) . " [$email] [gid:$org->nid]";
+    }
+  drupal_json_output($matches);
+}
+
+/**
+ * Menu callback; Retrieve a JSON object containing autocomplete suggestions for contributors
+ * Like the standard user/autocomplete but restricts suggestions to the contributor role.
+ */
+function contributor_autocomplete($string = '') {
+  $matches = array();
+  $role = user_role_load_by_name('Contributor');
+  $query =
+    'SELECT u.*, fn.field_first_name_value as firstname, ln.field_last_name_value as lastname
+    from users as u
+    join users_roles as ur on ur.uid = u.uid
+    left join field_data_field_first_name as fn on fn.entity_id=u.uid
+    left join field_data_field_last_name as ln on ln.entity_id=u.uid
+    WHERE ur.rid = :rid
+    AND (fn.field_first_name_value LIKE :string
+    OR ln.field_last_name_value LIKE :string
+    OR u.name LIKE :string
+    )';
+  $result = db_query($query, array(':rid' => $role->rid, ':string' => $string . "%"));
+  $results = $result->fetchAll();
+  foreach ($results as $user) {
+    if(isset($user->lastname) || isset($user->firstname)){
+      $matches[$user->firstname . " " . $user->lastname . " (" . $user->uid . ")"] = $user->firstname . " " . $user->lastname . " (" . $user->uid . ")";
+    }
+    else{
+      $matches[$user->firstname . " " . $user->lastname . " (" . $user->uid . ")"] = check_plain($user->name) . " (" . $user->uid . ")";
+    }
+  }
+  drupal_json_output($matches);
+}
+
+/**
+ * Menu callback; Retrieve a JSON object containing autocomplete suggestions for group members
+ * Like the standard user/autocomplete but restricts suggestions to the group.
+ */
+function member_autocomplete($string = '') {
+  $matches = array();
+    $query = db_select('users');
+    $query->fields('users', array('name'));
+    $query->join('og_membership','m',"m.etid=users.uid AND m.entity_type='user' AND m.gid=".organization_control_orgID());
+    $query->leftjoin('users_roles','ur','ur.uid=m.etid AND ur.rid=10');
+    $query->IsNull('ur.rid');
+    if ($string) {
+      $query->condition('users.name', db_like($string) . '%', 'LIKE');
+    }
+    $query->orderBy('users.name');
+    $results = $query->execute();
+    foreach ($results as $user) {
+      $matches[$user->name] = check_plain($user->name);
+    }
+
+  drupal_json_output($matches);
+}
+
+/**
+ * Menu callback; Retrieve a JSON object containing autocomplete suggestions for group members
+ * Like the standard user/autocomplete but restricts suggestions to the group and also provides full
+ * First and Last Name in value.
+ */
+function member_fn_autocomplete($string = '') {
+  $matches = array();
+  $query = db_select('users');
+  $query->fields('users', array('name'));
+  $query->join('og_membership','m',"m.etid=users.uid AND m.entity_type='user' AND m.gid=".organization_control_orgID());
+  $query->leftjoin('users_roles','ur','ur.uid=m.etid AND ur.rid=10');
+  $query->leftjoin('field_data_field_first_name','fn','fn.entity_id=users.uid');
+  $query->addField('fn','field_first_name_value','firstname');
+  $query->leftjoin('field_data_field_last_name','ln','ln.entity_id=users.uid');
+  $query->addField('ln','field_last_name_value','lastname');
+  $query->IsNull('ur.rid');
+  if ($string) {
+    $query->condition('users.name', db_like($string) . '%', 'LIKE');
+  }
+  #$query->orderBy('users.name');
+  $query->orderBy('lastname', 'ASC')
+    ->orderBy('firstname', 'ASC');
+  $results = $query->execute();
+  foreach ($results as $user) {
+    if(isset($user->lastname) || isset($user->firstname)){
+      $matches[$user->name] = $user->lastname . ", " . $user->firstname . " [" . check_plain($user->name) . "]";
+    }
+    else{
+      $matches[$user->name] = " [" . check_plain($user->name) . "]";
+    }
+  }
+
+  drupal_json_output($matches);
+}
+
+/**
+ * Menu callback; Retrieve a JSON object containing autocomplete suggestions for subgroup names
+ * Restricts suggestioned groups to only groups that belong to the current user's org AND the current user belongs to
+ * Difference betweeen orggroups_autocomplete is this only shows groups the admin is also a member of.
+ */
+function group_autocomplete($string = '',$format='json') {
+  Global $user;
+  $matches = array();
+  $currOrg = organization_control_orgID($user);
+  //if not an admin, block
+  if(organization_control_is_group_admin($currOrg,$user->uid)!=true){
+    return $matches;
+  }
+
+  $query = db_select('og_membership','og');
+  $query->fields('og', array('etid'));
+  $query->fields('n',array('title'));
+  $query->join('og_membership','m',"m.etid=".$user->uid." AND m.entity_type='user' AND m.gid=og.etid");
+  $query->join('node','n',"n.nid = og.etid");
+  $query->condition('og.gid',$currOrg);
+  $query->condition('og.entity_type','node');
+  $query->condition('og.field_name','og_org_ref');
+  $results = $query->execute();
+  foreach ($results as $group) {
+    $matches[$group->etid] = check_plain($group->title);
+  }
+  if($format=='json'){
+    drupal_json_output($matches);
+  }
+  elseif($format=='array'){
+    return $matches;
+  }
+}
+
+/**
+ * Menu callback; Retrieve a JSON object containing autocomplete suggestions for subgroup names
+ * Restricts suggestioned groups to all groups that belong to the current user's org and the current user is an admin of the org
+ * Difference betweeen groups_autocomplete is this includes all groups of an org, even if the current user is not a member.
+ */
+function orggroups_autocomplete($string = '',$format='json') {
+  Global $user;
+  $uid = $user->uid;
+  $matches = array();
+  $currOrg = organization_control_orgID($user);
+  //if not an admin, block
+  if(organization_control_is_group_admin($currOrg,$uid)!=true){
+    return $matches;
+  }
+  $query = db_select('og_membership','ogm');
+  $query->condition('ogm.entity_type','node');
+  $query->condition('ogm.field_name','og_org_ref');
+  $query->condition('ogm.gid',$currOrg);
+  $query->join('node','n',"n.nid=ogm.etid AND n.type='organizational_groups'");
+  $query->fields('ogm', array('etid'));
+  $query->fields('n',array('title'));
+  $results = $query->execute();
+  foreach ($results as $group) {
+    $matches[$group->etid] = check_plain($group->title);
+  }
+
+  if($format=='json'){
+    drupal_json_output($matches);
+  }
+  elseif($format=='array'){
+    return $matches;
+  }
+
+}
+
+/**
+ * Menu callback; Retrieve a JSON object containing autocomplete suggestions for people
+ * Restricts suggestions to people in a group the current user is an admin of
+ */
+function group_people_autocomplete($string = '',$format='json') {
+  Global $user;
+  $uid = $user->uid;
+  $matches = array();
+  $orgID = organization_control_orgID($user);
+  //if you are not an admin of the group you are not an admin of anyone
+  if(!organization_control_is_group_admin($orgID,$uid)){
+    return $matches;
+  }
+
+  $query = db_select('og_membership', 'om');
+  $query->condition('om.gid',$orgID);
+  $query->condition('om.entity_type','user');
+  $query->condition('om.field_name','og_user_node');
+  $query->addField('om','etid','uid');
+  //don't show the billing user
+  $query->leftjoin('users_roles','ur','ur.uid=om.etid AND ur.rid=10');
+  $query->IsNull('ur.rid');
+
+  //This join to `node` is not needed if we switch to username
+  $query->leftjoin('users','u','u.uid=om.etid');
+  $query->addField('u','name','name');
+
+  $query->leftjoin('field_data_field_first_name','fn','fn.entity_id=om.etid');
+  $query->leftjoin('field_data_field_last_name','ln','ln.entity_id=om.etid');
+  $query->addField('fn','field_first_name_value','firstname');
+  $query->addField('ln','field_last_name_value','lastname');
+  $query->orderBy('lastname', 'ASC')
+    ->orderBy('firstname', 'ASC');
+  $results = $query->execute();
+  while($result = $results->fetchAssoc()){
+    //$matches[$result['uid']] = $result['name'];
+    //this version uses the first name and last name instead of the username
+    if(isset($result['lastname']) || isset($result['firstname'])) {
+      $matches[$result['uid']] = $result['lastname'] . ", " . $result['firstname'] . " [" . $result['name'] . "]";
+    }
+    else {
+      $matches[$result['uid']] = " [" . $result['name'] . "]";
+    }
+  }
+  if($format=='json'){
+    drupal_json_output($matches);
+  }
+  elseif($format=='array'){
+    return $matches;
+  }
+
+}
+
+/**
+ * Helper function returning an array of sub-group (titles) a member belongs to.
+ * It may be wise to eventually re-write to not load the user but just query
+ * og_membership.
+ */
+function organization_control_get_member_groups($uid){
+  $matches = array();
+  $user = user_load($uid);
+
+  if(isset($user->og_user_node1['und'])){
+    foreach($user->og_user_node1['und'] as $nt){
+      $query = db_select('node','n');
+      $query->fields('n',array('title'));
+      $query->condition('n.nid', $nt['target_id']);
+      $results = $query->execute();
+      if($record = $results->fetchAssoc()){
+        array_push($matches, $record['title']);
+      }
+    }
+  }
+  return $matches;
+}
+
+/*
+ * provide a block content for changing the currently viewed group
+ * Shows all groups for a organization
+ */
+
+function _select_group_block_content(){
+  $generator['_select_group_block_content_form'] = drupal_get_form('_select_group_block_content_form');
+  return $generator;
+
+}
+function _select_group_block_content_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //Wrap this section in a div.
+  $orgID = organization_control_orgID();
+  $groups = array($orgID=>organization_control_orgName($orgID));
+  $groups = $groups + group_autocomplete('','array');
+  $form['groups'] = array (
+    '#type' => 'select',
+    '#title' => t('Change Group'),
+    '#options' => $groups,
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Go'),
+  );
+  return $form;
+}
+function _select_group_block_content_form_validate(&$form, &$form_state){
+//if the request is hacked to a different group the user will be denied access.
+//we could validate that instead of issuing an error.
+//not found a simple funtion to see if a user has access to view a peice of content, skipping for now
+
+}
+
+function _select_group_block_content_form_submit($form, &$form_state){
+  drupal_goto('people/community/'.$form_state['values']['groups']);
+}
+/*
+ * provide a block content for changing the currently viewed group in the admin pages.
+ * Shows groups the current user is an admin of
+ */
+function _select_group_admin_block_content(){
+  $generator['_select_group_block_content_admin_form'] = drupal_get_form('_select_group_block_content_admin_form');
+  return $generator;
+}
+function _select_group_block_content_admin_form($form, &$form_state){
+  //the Form API Array
+  $form =array();
+  //Wrap this section in a div.
+  $orgID = organization_control_orgID();
+  //add the org first.
+  $groups = array('/my-organization/organization/manage'=>organization_control_orgName($orgID));
+  //get the groups
+  $groupArr = orggroups_autocomplete('','array');
+  //reformat so the array value is a path.
+  $groupsFormatted = array();
+  foreach($groupArr as $gk => $gv){
+    $path = "/my-organization/groups/manage/".$gk;
+    $groupsFormatted[$path] = $gv;
+  }
+  $groups = $groups + $groupsFormatted;
+  natcasesort($groups);
+  $form['groups'] = array (
+    '#type' => 'select',
+    '#title' => t('Filter by Group'),
+    '#options' => $groups,
+    '#attributes' => array(
+      'class' => array('adminSelectGroup'),
+    ),
+  );
+  $form['submit'] = array (
+    '#type' => 'submit',
+    '#value' => t('Go'),
+  );
+  return $form;
+}
+function _select_group_block_content_admin_form_submit($form, &$form_state){
+  drupal_goto($form_state['values']['groups']);
+}
+
+
+/*
+ * provide a block content for changing the currently viewed group in the admin pages.
+ * Shows groups the current user is an admin of
+ */
+function _group_admin_action_block_content(){
+
+  //wrap in a div.
+  $generator['groupAdminBlock'] = array(
+    '#type' => 'container',
+    '#attributes' => array(
+      'class' => array('groupAdminBlock'),
+    ),
+  );
+  //wrap in a div.
+  $generator['groupAdminBlock']['selectGroupBlock'] = array(
+    '#type' => 'container',
+    '#attributes' => array(
+      'class' => array('selectGroupBlock'),
+    ),
+  );
+  //include the group selector
+  $generator['groupAdminBlock']['selectGroupBlock']['_select_group_block_content_admin_form'] = drupal_get_form('_select_group_block_content_admin_form');
+  $generator['groupAdminBlock']['selectGroupBlock']['_select_group_block_content_admin_form']['#weight'] = '50';
+  //wrap in a div.
+  $generator['groupAdminBlock']['groupAdminActions'] = array(
+    '#type' => 'container',
+    '#attributes' => array(
+      'class' => array('groupAdminActions'),
+    ),
+  );
+  //show the current group name
+  $orgTitle = organization_control_orgName(arg(3));
+  $currentGroup = "<label>Modify Current Group: <em>$orgTitle</em></label>";
+  $generator['groupAdminBlock']['groupAdminActions']['currentGroup'] = array(
+    '#type' => 'markup',
+    '#markup' => $currentGroup,
+    '#weight' => '-40',
+  );
+  //Rename form
+  //delete link
+  $generator['groupAdminBlock']['groupAdminActions']['editLink'] = array(
+    '#type' => 'link',
+    '#title' => t('Rename'),
+    '#href' => 'my-organization/groups/rename/'.arg(3),
+    '#weight' => '-30',
+    '#attributes' => array(
+      'class' => array('ctools-use-modal'),
+      'id' => array('groupAdminBlockEditLink'),
+    ),
+  );
+  //delete link
+  $generator['groupAdminBlock']['groupAdminActions']['deleteLink'] = array(
+    '#type' => 'link',
+    '#title' => t('Delete'),
+    '#href' => 'my-organization/groups/delete/'.arg(3),
+    '#weight' => '-20',
+    '#attributes' => array(
+      'class' => array('ctools-use-modal'),
+      'id' => array('groupAdminBlockDeleteLink'),
+    ),
+  );
+
+  return $generator;
+}
+
+/*
+* CUSTOM VBO Actions
+*/
+
+
+/*
+* Define the custom VBO actions
+*/
+function organization_control_action_info() {
+  $items = array();
+
+    $items['organization_control_add_to_subgroup_action'] = array(
+      'type' => 'entity',
+      'label' => t('Add the user to a group'),
+      'behavior' => array('create_property'),
+      'configurable' => TRUE,
+      'vbo_configurable' => TRUE,
+      'triggers' => array('any'),
+    );
+    $items['organization_control_user_roles_action'] = array(
+      'type' => 'og_membership',
+      'label' => t('Assign/Unassign Admin Role'),
+      'configurable' => TRUE,
+    );
+    $items['organization_control_admin_organization_dashboard_user_roles_action'] = array(
+      'type' => 'og_membership',
+      'label' => t('Assign/Unassign Admin Role (For admin_organization_dashboard'),
+      'configurable' => TRUE,
+    );
+    $items['organization_control_remove_from_group_action'] = array(
+      'type' => 'og_membership',
+      'label' => t('Remove from the group'),
+      'behavior' => array('create_property'),
+      'configurable' => FALSE,
+      'vbo_configurable' => FALSE,
+      'triggers' => array('any'),
+    );
+  return $items;
+}
+
+/*
+* Very similar to the og_user_roles_action_form but We get our group context differently, based on current user org
+*/
+
+function organization_control_user_roles_action_form($context) {
+  //requestGroup
+  $requestedGroup = organization_control_orgID();
+  $group_type='node';
+  $group = entity_load_single($group_type, $requestedGroup);
+  if (!$group || !og_is_group($group_type, $group)) {
+    return;
+  }
+  list(,, $bundle) = entity_extract_ids($group_type, $group);
+  $og_roles = og_roles($group_type, $bundle, $requestedGroup, FALSE, FALSE);
+  $form['header'] = array(
+    '#type' => 'markup',
+    '#markup' =>"<h3>Permissions for <em>".organization_control_orgName($requestedGroup)."</em></h3>",
+  );
+  $form['add_roles'] = array(
+    '#type' => 'radios',
+    '#title' => t('Configure Roles'),
+    '#description' => t('Choose the action for your selected users.'),
+    '#options' => array(0 => t('Remove Admin Role'), 1 => t('Add Admin Role')),
+  );
+  return $form;
+}
+
+/*
+* The form validation for the VBO action to changes admin roles for users
+*/
+
+function organization_control_user_roles_action_validate(&$form, &$form_state){
+  Global $user;
+  //requestGroup
+  $requestedGroup = organization_control_orgID();
+  if(!is_numeric($requestedGroup)){
+    form_set_error('global','The organization was not found');
+  }
+  //check permissions.
+  //assigner has permission
+  if(organization_control_is_group_admin($requestedGroup,$user->uid)!==TRUE){
+    form_set_error("select","There was a permission error when assigning roles within this group. Contact administrator. ");
+  }
+  //if a value was not choosen
+  if(!isset($form_state['values']['add_roles']) || $form_state['values']['add_roles']==""){
+    form_set_error("add_roles","Please choose an action for your selected users");
+  }
+}
+/*
+* The form submit for the VBO action to changes admin roles for users
+*/
+
+function organization_control_user_roles_action_submit(&$form, &$form_state){
+  $return['add_roles'] = $form_state['values']['add_roles'];
+  $return['requestedGroup'] = organization_control_orgID();
+  return $return;
+}
+/*
+* The action processor for the VBO action to changes admin roles for users
+*/
+
+function organization_control_user_roles_action(&$user, $context) {
+  //Relevant vars
+  $requestedUser = $user->etid;
+  $requestedAction = $context['add_roles'];
+  $requestedGroup = $context['requestedGroup'];
+  if(!is_numeric($requestedGroup)){
+    return;
+  }
+  //I need to know the content type to know the rid
+  $groupDetails = node_load($requestedGroup);
+  if($groupDetails->type == 'organization'){
+    $rid = 3;
+  }
+  if($groupDetails->type == 'organizational_groups'){
+    $rid = 6;
+  }
+  $requestedUser = user_load($requestedUser);
+
+  if($requestedAction==0){
+    og_role_revoke('node', $requestedGroup, $requestedUser->uid, $rid);
+    $message = t('%name\'s Group Admin role has been removed from to %subgroup', array(
+      '%name' => $requestedUser->name,
+      '%subgroup' => organization_control_orgName($requestedGroup)
+    ));
+  }elseif($requestedAction==1){
+    og_role_grant('node', $requestedGroup, $requestedUser->uid, $rid);
+    $message = t('%name was granted the Group Admin role to %subgroup', array(
+      '%name' => $requestedUser->name,
+      '%subgroup' => organization_control_orgName($requestedGroup)
+    ));
+  }
+  drupal_set_message($message);
+}
+
+
+/*
+* Very similar to the og_user_roles_action_form but We get our group context differently, based on current user org
+*/
+
+function organization_control_admin_organization_dashboard_user_roles_action_form($context) {
+  $form['header'] = array(
+    '#type' => 'markup',
+    '#markup' =>"<h3>Permissions for <em>TEST ORG</em></h3>",
+  );
+  $form['add_roles'] = array(
+    '#type' => 'radios',
+    '#title' => t('Configure Roles'),
+    '#description' => t('Choose the action for your selected users.'),
+    '#options' => array(0 => t('Remove Admin Role'), 1 => t('Add Admin Role')),
+  );
+  return $form;
+}
+
+/*
+* The form validation for the VBO action to changes admin roles for users
+*/
+
+function organization_control_admin_organization_dashboard_user_roles_action_validate(&$form, &$form_state){
+  //is a drupal admin
+  if(!organization_control_user_has_role('administrator')){
+    form_set_error("add_roles","There was a permissions error.");
+  }
+}
+
+/*
+* The form submit for the VBO action to changes admin roles for users
+*/
+
+function organization_control_admin_organization_dashboard_user_roles_action_submit(&$form, &$form_state){
+  $return['add_roles'] = $form_state['values']['add_roles'];
+  return $return;
+}
+/*
+* The action processor for the VBO action to changes admin roles for users
+*/
+
+function organization_control_admin_organization_dashboard_user_roles_action(&$user, $context) {
+  //Relevant vars
+  $requestedUID = $context['og_membership']->etid;
+  $requestedUser = user_load($requestedUID);
+  $requestedGroup = $context['og_membership']->gid;
+  $requestedAction = $context['add_roles'];
+  //This dashboard only cares about admin roles of the main org
+  $rid = 3;
+  if($requestedAction==0){
+    og_role_revoke('node', $requestedGroup, $requestedUser->uid, $rid);
+    $message = t('%name\'s Group Admin role has been removed from to %subgroup', array(
+      '%name' => $requestedUser->name,
+      '%subgroup' => organization_control_orgName($requestedGroup)
+    ));
+  }elseif($requestedAction==1){
+    og_role_grant('node', $requestedGroup, $requestedUser->uid, $rid);
+    $message = t('%name was granted the Group Admin role to %subgroup', array(
+      '%name' => $requestedUser->name,
+      '%subgroup' => organization_control_orgName($requestedGroup)
+    ));
+  }
+  drupal_set_message($message);
+}
+
+/*
+* Custom VBO action  to remove users from a group.
+*/
+function organization_control_remove_from_group_action($member, $context) {
+  //Relevant vars
+  $oldMemberID = $member->etid;
+  $oldGroup = $member->gid;
+  $oldMember = user_load($oldMemberID);
+  $group_type = 'node';
+
+  // Don't process the group manager of the organization, if exists.
+  $group = entity_load_single($group_type, $oldGroup);
+  if (!empty($group->uid) && $group->uid == $oldMemberID && organization_control_orgID()==$oldGroup) {
+//    return;
+  }
+
+  Global $user;
+  //requestGroup
+  //check permissions.
+  //remover has permission
+  //the group might be the main org or a org's group. Different functions to lookup permissions.
+  if($group->type == 'organization'){
+    if(organization_control_is_group_admin($oldGroup,$user->uid)!==TRUE){
+      return;
+    }
+  }
+  elseif($group->type == 'organizational_groups'){
+    if(organization_control_is_group_admin_by_subgroup($oldGroup,$user->uid)!==TRUE){
+      return;
+    }
+  }
+  else{
+    return;
+  }
+
+  //Remove them from the group.
+  og_ungroup($group_type, $oldGroup, 'user', $oldMemberID);
+
+  $successMsgGroups = array(organization_control_orgName($oldGroup));
+  //if this was the main org, remove move them from any subgroups too.
+  $orgID = organization_control_orgID($oldMember);
+  if($orgID == $oldGroup){
+    $query = db_select('og_membership','og');
+    $query->fields('og',array('gid'));
+    $query->condition('og.etid',$oldMemberID);
+    $query->condition('og.state',1);
+    $query->condition('og.entity_type','user');
+    $query->join('og_membership','ogParent',"ogParent.etid=og.gid && ogParent.state=1 && ogParent.entity_type='node' && ogParent.gid=$orgID");
+    $results = $query->execute();
+    while($result = $results->fetchAssoc()){
+      og_ungroup($group_type, $result['gid'], 'user', $oldMemberID);
+      $successMsgGroups[]= organization_control_orgName($result['gid']);
+    }
+  }
+
+  $successMsgGroupsStr = implode(", ", $successMsgGroups);
+
+  $message = t('%name was removed from %subgroup', array(
+    '%name' => $oldMember->name,
+    '%subgroup' => $successMsgGroupsStr,
+  ));
+  drupal_set_message($message);
+
+  return $member;
+}
+
+
+/*
+* The form validation for the VBO action to add users to a group
+*/
+
+function organization_control_add_to_subgroup_action_form($settings, &$form_state) {
+  $form = array();
+  $form['subgroup'] = array(
+    '#type' => 'select',
+    '#title' => t('Add users to which subgroup?'),
+    '#options' => orggroups_autocomplete('','array'),
+    '#required' => TRUE,
+  );
+  return $form;
+}
+
+function organization_control_add_to_subgroup_action_submit($form, $form_state) {
+  switch ($form_state['step']) {
+    case 'views_form_views_form':
+    case 'views_bulk_operations_config_form':
+      break;
+    break;
+  }
+  $return = array();
+  $return['subgroup'] = $form_state['values']['subgroup'];
+  return $return; //Note, return value here must be an array.
+}
+
+function organization_control_add_to_subgroup_action(&$user, $context) {
+  //Relevant vars
+  $newMember = $user->etid;
+  $existingGroup = $user->gid;
+  $requestedGroup = $context['subgroup'];
+
+  $values = array(
+    'entity_type' => 'user',
+    'entity' => $newMember,
+    'field_name' => 'og_user_node1',
+  );
+  $results = og_group('node',$requestedGroup,$values);
+  $newMember = user_load($newMember);
+
+  $message = t('%name was added to %subgroup', array(
+    '%name' => $newMember->name,
+    '%subgroup' => organization_control_orgName($context['subgroup']),
+  ));
+  drupal_set_message($message);
+}
+
+/*
+ * Display seat utilization.
+ */
+function organization_control_seat_utilization() {
+  $organization_control_organization_size = organization_control_organization_size();
+  $subscriptionInfo = organization_control_subscription_info();
+  $block = array(
+          '#markup' => '<h3 class="info">Your organization is utilizing '. $organization_control_organization_size . ' out of ' . $subscriptionInfo['field_total_seats_value'] . ' team members.</h3>',
+      );
+  return $block;
+}
+
+/*
+ * Create a page to make a subgroup
+ */
+function organization_control_create_subgroup_content(){
+  $page['organization_control_create_subgroup_form'] = drupal_get_form('organization_control_create_subgroup_form');
+  return $page;
+}
+/*
+ * Create a form to make a subgroup
+ */
+function organization_control_create_subgroup_form($form,&$form_state){
+//  $form['header'] = array (
+//    '#type' => 'markup',
+//    '#markup' => "<h1>Create a group for ".organization_control_orgName()."</h1>",
+//    '#required' => TRUE
+//  );
+  $form['group_name'] = array (
+    '#type' => 'textfield',
+    '#title' => t('Create a New Group:'),
+    '#required' => TRUE
+  );
+  //Add the submit button
+   $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Create Group'),
+  );
+  return $form;
+}
+/*
+ * Validate the form to make a subgroup
+ */
+function organization_control_create_subgroup_form_validate(&$form,&$form_state){
+  Global $user;
+  //check permissions.
+  $orgID = organization_control_orgID($user);
+  if(organization_control_is_group_admin($orgID,$user->uid)!==TRUE){
+    form_set_error("header","There was a permission error when creating your group. Contact administrator. ");
+  }
+}
+/*
+ * Process The a form to make a subgroup
+ */
+function organization_control_create_subgroup_form_submit(&$form,&$form_state){
+  //Get some info on the creating user
+  Global $user;
+  $buid = organization_control_subscriber_uid($user);
+  //there should never be a situation where there is not a billing uid but just in case we will fallback to the current user
+  if($buid == 0){
+    $buid = $user->uid;
+  }
+  //Create the node that is the group
+  $node = new stdClass();
+  $node->title = organization_control_orgName().":".$form_state['values']['group_name'];
+  $node->type = "organizational_groups";
+  node_object_prepare($node);
+  $node->language = LANGUAGE_NONE;
+  $node->uid = $buid;
+  $node->status = 1;
+  $node->promote = 0;
+  $node->comment = 0;
+  //Group Parent
+  $node->og_org_ref[$node->language][] = array(
+    'target_id' => organization_control_orgID($user),
+    'target_type' => 'node',
+  );
+  $node = node_submit($node); // Prepare node for saving
+  node_save($node);
+  drupal_set_message($node->title . " created. You may now add teammates by selecting them and choosing 'add user to a group' in the operations menu.\n");
+  $form_state['input'] = array();
+  $form_state['rebuild'] = TRUE;
+}
+
+function organization_control_delete_subgroup_content($group){
+  $orgTitle = organization_control_orgName($group);
+  $output = array();
+  $output['header'] = array(
+    '#type'=>'markup',
+    '#markup'=>'<h1>'.t('Delete Group').'</h1><p>This will delete the group "'.$orgTitle.'". There is no undo.</p>',
+  );
+  $output['organization_control_delete_subgroup_form'] = drupal_get_form('organization_control_delete_subgroup_form',$group);
+  return $output;
+}
+
+
+function organization_control_delete_subgroup_form($form, $form_state,$groupID){
+  $orgTitle = organization_control_orgName($groupID);
+
+  $form = array();
+  $form['groupID'] = array(
+    '#type' => 'hidden',
+    '#value' => $groupID,
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Yes, Delete '.$orgTitle),
+    '#attributes' => array(
+      'class' => array(
+        'button-negative'
+      )
+    )
+  );
+
+  return $form;
+}
+
+function organization_control_delete_subgroup_form_validate(&$form, &$form_state){
+  //verify the group id was of a group.
+  $groupID = $form_state['values']['groupID'];
+  if($groupID == "" || $groupID == 0){
+    form_set_error('groupID','There was a looking up this group');
+  }
+  $group = node_load($groupID);
+  if(!isset($group->type) || $group->type != 'organizational_groups'){
+    form_set_error('groupID','There was a problem with this group type');
+  }
+  //verify this user is an admin of this group
+  if(!organization_control_is_group_admin_by_subgroup($groupID)){
+    form_set_error('groupID','There was a permissions error');
+  }
+  $form_state['redirect'] = 'my-organization/organization/manage';
+}
+
+function organization_control_delete_subgroup_form_submit(&$form, &$form_state){
+  $groupID = $form_state['values']['groupID'];
+  //remove all users from this group.
+  $query = db_select('og_membership', 'm');
+  $query->condition('m.group_type', 'node');
+  $query->condition('m.entity_type', 'user');
+  $query->condition('m.field_name', 'og_user_node1');
+  $query->condition('m.gid', $groupID);
+  $query->fields('m', array('id'));
+  $results = $query->execute();
+  $ids = array();
+  foreach ($results AS $result) {
+    $ids[] = $result->id;
+  }
+  if (!empty($ids)) {
+    og_membership_delete_multiple($ids);
+  }
+  //delete the node.
+  node_delete($groupID);
+
+  drupal_set_message('Your group was deleted.');
+}
+
+function organization_control_rename_subgroup_content($group){
+  $orgTitle = organization_control_orgName($group);
+  $output = array();
+  $output['header'] = array(
+    '#type'=>'markup',
+    '#markup'=>'<h1>'.t('Rename Group').'</h1><p>This will rename the group "'.$orgTitle.'".</p>',
+  );
+  $output['organization_control_rename_subgroup_form'] = drupal_get_form('organization_control_rename_subgroup_form',$group);
+  return $output;
+}
+
+
+function organization_control_rename_subgroup_form($form, $form_state,$groupID){
+  $form = array();
+  $form['newTitle'] = array(
+    '#type' => 'textfield',
+    '#title' => 'New Group Name',
+    '#required' => true,
+  );
+  $form['groupID'] = array(
+    '#type' => 'hidden',
+    '#value' => $groupID,
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Rename'),
+    '#attributes' => array(
+      'class' => array(
+        'button-affirmative'
+      )
+    )
+  );
+
+  return $form;
+}
+
+function organization_control_rename_subgroup_form_validate(&$form, &$form_state){
+  //verify the group id was of a group.
+  $groupID = $form_state['values']['groupID'];
+  if($groupID == "" || $groupID == 0){
+    form_set_error('groupID','There was a looking up this group');
+  }
+  $group = node_load($groupID);
+  if(!isset($group->type) || $group->type != 'organizational_groups'){
+    form_set_error('groupID','There was a problem with this group type');
+  }
+  //verify thie title is not blank
+  if($form_state['values']['newTitle']==""){
+    form_set_error('newTitle','A new group name is required.');
+  }
+  //verify this user is an admin of this group
+  if(!organization_control_is_group_admin_by_subgroup($groupID)){
+    form_set_error('groupID','There was a permissions error');
+  }
+  $form_state['redirect'] = 'my-organization/groups/manage/'.$groupID;
+}
+
+function organization_control_rename_subgroup_form_submit(&$form, &$form_state){
+  $groupID = $form_state['values']['groupID'];
+  $newTitle = organization_control_orgName().":".filter_xss($form_state['values']['newTitle']);
+  $group = node_load($groupID);
+  $group->title = $newTitle;
+  node_save($group);
+  drupal_set_message('Your group was renamed.');
+}
+
+
+/**
+ * Check to see if a user has been assigned a certain role.
+ * http://ryanszrama.com/blog/10-25-2007/checking-if-drupal-user-has-role
+ *
+ * @param $role
+ *   The name of the role you're trying to find.
+ * @param $user
+ *   The user object for the user you're checking; defaults to the current user.
+ * @return
+ *   TRUE if the user object has the role, FALSE if it does not.
+ */
+function organization_control_user_has_role($role, $user = NULL) {
+  if ($user == NULL) {
+    global $user;
+  }
+
+  if (is_array($user->roles) && in_array($role, array_values($user->roles))) {
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Implements hook_node_access().
+ *
+ * Restrict Editing an Organization or Organizational group
+ * Restrict Deleting an Organization
+ *
+ */
+function organization_control_node_access($node, $op, $account) {
+
+  // If $node is a string, the node has not yet been created. We don't care
+  // about that case.
+  if (is_string($node)) {
+    return NODE_ACCESS_IGNORE;
+  }
+
+  //If Op is edit or delete and node type is organization
+  if ( ( $op == 'update' || $op == 'delete')  && ( $node->type == "organization" || $node->type == "organziational_group" ) ) {
+
+    //if deleting an organization and they don't have admin delete permissions, deny
+    if ($op == 'delete' && $node->type == "organization" && user_access('delete_organizations')) {
+      return NODE_ACCESS_ALLOW;
+    }
+    elseif ($op == 'delete' && $node->type == "organization") {
+//      drupal_set_message(t('Deleting an organization is not allowed.'));
+      return NODE_ACCESS_DENY;
+    }
+
+    //if they have admin update permissions
+    if( $op == 'update' && user_access('edit_any_organization') ) {
+      return NODE_ACCESS_ALLOW;
+    }
+    else {
+      //if they are a group admin and in this group then allow.
+      //load the full user
+      $account_full_load = user_load($account->uid);
+      //get their main group
+      $orgID = organization_control_orgID($account_full_load);
+      //get their sub groups
+      $org_groupIDs = array();
+      $org_groupIDs = $account_full_load->og_user_node1['und'];
+      //if they are in the main group or subgroup AND they are a group admin, allow
+      if ( ( $node->nid==$orgID || in_array($node->nid,$org_groupIDs) ) && organization_control_is_group_admin($node->nid,$account_full_load->uid ) ) {
+        return NODE_ACCESS_ALLOW;
+      }
+      //Otherwise do not allow
+      else{
+        drupal_set_message(t('Editing this group is not allowed because (@name) is not a group administrator.', array('@name' => $account_full_load->name)));
+        return NODE_ACCESS_DENY;
+      }
+    }
+
+  }
+
+  return NODE_ACCESS_IGNORE;
+
+}

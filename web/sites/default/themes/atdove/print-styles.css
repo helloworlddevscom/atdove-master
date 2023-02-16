@@ -1,0 +1,232 @@
+*{
+    padding: 0;
+    margin: 0;
+    font-family: 'Roboto', 'Helvetica', sans-serif;
+    font-size: 12pt;
+}
+
+body {
+    padding: 0;
+    margin: 0;
+}
+
+h1 {
+    color: #555555;
+    padding: 5mm 0 10mm 0;
+    font-size: 35pt;
+}
+
+.title, .cert-title {
+    color: #888888;
+    font-size: 25pt;
+    padding: 5mm 0 10mm 0;
+}
+
+.title {
+    padding: 5mm 0 0 0;
+}
+
+h2, h3, h4, h5, h6 {
+    color: #333333;
+    page-break-after: avoid;
+}
+
+h2 {
+    font-size: 16pt;
+    padding: 5mm 0;
+    margin: 0;
+}
+
+p {
+    padding: 0;
+    margin: 15mm 0mm;
+    line-height: 18pt;
+}
+
+ul, ol {
+    margin: 0;
+    padding: 4mm 10mm;
+}
+
+li, li strong {
+    color: #333333;
+    padding: 2mm 0;
+    line-height: 16pt;
+}
+
+
+.print-content img {
+    padding: 20px 0;
+    border: none;
+    margin: 0 auto;
+    float: none;
+    width: auto;
+    max-width: 90%;
+    height: auto;
+}
+
+
+#site_logo img {
+    max-width: 60%;
+}
+
+h1.checklist {
+    color: #555555;
+    padding: 5mm 0 10mm 0;
+    font-size: 30pt;
+    text-align: center;
+}
+
+p.checklist-copyright {
+    font-size: 10pt;
+    color: #aaaaaa;
+    text-align: center;
+    padding: 60px 0 0 0;
+}
+
+#site_logo {
+    padding: 0;
+    margin: 5mm 0;
+    line-height: 18pt;
+}
+
+.certificatePDF {
+    background-image: url(images/cert-bg-01.png);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    padding: 20mm;
+}
+
+.certificate-body-wrapper {
+    position: fixed;
+    top: 10%;
+    left: 15%;
+    width: 70%;
+    text-align: center;
+}
+
+.cert-user-name {
+    font-size: 30pt;
+    padding: 15mm 0 0 0;
+    color: #555555;
+}
+
+p.specialP {
+    font-style: italic;
+    margin: 0 0 10mm 0;
+}
+
+p.smallP {
+    font-size: 90%;
+    color: #555555;
+}
+
+p.supersmallP {
+    font-size: 80%;
+    color: #555555;
+}
+
+.basicPDFpage {
+    padding: 10mm;
+}
+
+.inner-body-wrapper {
+/*    padding: 11mm 12mm;*/
+}
+
+img.auto-gen {
+    width: 100mm !important;
+    height: auto !important;
+    border: none !important;
+    float: none !important;
+    padding: 5mm !important;
+    margin: 5mm !important;
+    max-width: 100mm !important;
+}
+
+.print-logo img {
+    padding: 0 0 7mm 0;
+    width: 200px;
+    max-width: 200px;
+    margin: 0;
+}
+
+.field-name-field-image img {
+    width: 35mm !important;
+    float: left !important;
+    padding: 0 10mm 10mm 0 !important;
+    padding: 5mm !important;
+    margin: 0 !important;
+}
+
+.print-site_name {
+    padding: 1mm 0 2mm 0;
+    font-size: 8pt;
+    color: #777777;
+}
+
+.print-content {
+    clear: both;
+    padding: 2mm 0;
+}
+
+.print-breadcrumb {
+    display: none;
+}
+
+.print-hr {
+    background: #eeeeee;
+    height: 1mm;
+    border: none;
+    margin: 5mm 0;
+}
+
+.print-source_url p, .print-source_url strong {
+    padding: 0 0 2mm 0;
+    color: #777777;
+    font-size: 9pt;
+}
+
+/*
+.field-label {
+    margin: 5mm 0 3mm 0;
+    padding: 3mm;
+    color: #333333;
+    clear: both;
+    border-bottom: 0.5mm solid #eeeeee;
+}
+
+table {
+    border-collapse: collapse;
+    border: 0.5mm solid #eeeeee;
+    padding: 0;
+    margin: 0 7mm 7mm 7mm;
+    display: inline-block;
+    width: auto !important;
+    text-align: left;
+    page-break-inside: avoid;
+}
+
+table caption {
+    padding: 3mm;
+}
+
+table tr {
+    border-bottom: 0.5mm solid #eeeeee;
+}
+
+table th {
+    background: #eeeeee;
+}
+
+table td, table th {
+    padding: 2mm;
+    font-weight: normal;
+    border: 0.5mm solid #eeeeee;
+}
+*/
+
+.clearit {
+    clear: both; 
+}

@@ -1,0 +1,160 @@
+{ "commerce_checkout_create_acct_org_and_users_debug_" : {
+    "LABEL" : "Create Users and Organization",
+    "PLUGIN" : "reaction rule",
+    "OWNER" : "rules",
+    "TAGS" : [ "Commerce Checkout", "DLCommerce" ],
+    "REQUIRES" : [
+      "rules",
+      "dl_billing_management",
+      "php",
+      "commerce_checkout",
+      "og",
+      "commerce_payment"
+    ],
+    "ON" : {
+      "commerce_payment_order_paid_in_full" : [],
+      "commerce_checkout_complete" : []
+    },
+    "IF" : [
+      { "data_is" : { "data" : [ "commerce-order:uid" ], "value" : "0" } },
+      { "data_is" : { "data" : [ "commerce-order:type" ], "value" : "commerce_order" } },
+      { "entity_has_field" : { "entity" : [ "commerce-order" ], "field" : "commerce_customer_billing" } }
+    ],
+    "DO" : [
+      { "dl_billing_management_get_ubid_for_rule_action" : {
+          "USING" : { "email" : [ "commerce-order:mail" ] },
+          "PROVIDE" : { "ubid" : { "ubid" : "Unique Billing ID" } }
+        }
+      },
+      { "variable_add" : {
+          "USING" : { "type" : "text", "value" : [ "commerce-order:mail" ] },
+          "PROVIDE" : { "variable_added" : { "submitted_mail" : "Submitted Mail" } }
+        }
+      },
+      { "variable_add" : {
+          "USING" : { "type" : "text", "value" : [ "commerce-order:mail-username" ] },
+          "PROVIDE" : { "variable_added" : { "submitted_name" : "Submitted Name" } }
+        }
+      },
+      { "entity_create" : {
+          "USING" : {
+            "type" : "user",
+            "param_name" : {
+              "select" : "ubid",
+              "php" : { "code" : "return \u0022dlBillingUser+\u0022.$value;" }
+            },
+            "param_mail" : {
+              "select" : "ubid",
+              "php" : { "code" : "return \u0022dlBillingUser+\u0022.$value.\u0022@outlier.com\u0022;" }
+            }
+          },
+          "PROVIDE" : { "entity_created" : { "billing_account" : "Billing Account" } }
+        }
+      },
+      { "entity_save" : { "data" : [ "billing-account" ], "immediate" : "1" } },
+      { "data_set" : { "data" : [ "billing-account:status" ], "value" : "1" } },
+      { "entity_save" : { "data" : [ "billing-account" ], "immediate" : "1" } },
+      { "entity_query" : {
+          "USING" : {
+            "type" : "user",
+            "property" : "uid",
+            "value" : [ "billing-account:uid" ],
+            "limit" : "1"
+          },
+          "PROVIDE" : { "entity_fetched" : { "account_fetched" : "Fetched account" } }
+        }
+      },
+      { "LOOP" : {
+          "USING" : { "list" : [ "account-fetched" ] },
+          "ITEM" : { "billing_list_item" : "Billing list item" },
+          "DO" : [
+            { "data_set" : {
+                "data" : [ "commerce-order:uid" ],
+                "value" : [ "billing-list-item:uid" ]
+              }
+            },
+            { "data_set" : {
+                "data" : [ "commerce-order:commerce-customer-billing:uid" ],
+                "value" : [ "billing-list-item:uid" ]
+              }
+            },
+            { "data_set" : {
+                "data" : [ "commerce-order:mail" ],
+                "value" : [ "billing-account:mail" ]
+              }
+            }
+          ]
+        }
+      },
+      { "entity_create" : {
+          "USING" : {
+            "type" : "user",
+            "param_name" : [ "submitted-name" ],
+            "param_mail" : [ "submitted-mail" ]
+          },
+          "PROVIDE" : { "entity_created" : { "general_account" : "General Account" } }
+        }
+      },
+      { "entity_save" : { "data" : [ "general-account" ], "immediate" : "1" } },
+      { "data_set" : { "data" : [ "general-account:status" ], "value" : "1" } },
+      { "send_account_email" : {
+          "account" : [ "general-account" ],
+          "email_type" : "register_admin_created"
+        }
+      },
+      { "entity_fetch" : {
+          "USING" : {
+            "type" : "commerce_customer_profile",
+            "id" : [ "commerce-order:commerce-customer-billing:profile-id" ]
+          },
+          "PROVIDE" : { "entity_fetched" : { "customer_billing_profile" : "Customer Billing Profile" } }
+        }
+      },
+      { "entity_create" : {
+          "USING" : {
+            "type" : "node",
+            "param_type" : "organization",
+            "param_title" : "[customer-billing-profile:field-company]",
+            "param_author" : [ "commerce-order:owner" ]
+          },
+          "PROVIDE" : { "entity_created" : { "new_organization" : "New Organization" } }
+        }
+      },
+      { "entity_save" : { "data" : [ "new-organization" ], "immediate" : "1" } },
+      { "user_add_role" : {
+          "account" : [ "billing-account" ],
+          "roles" : { "value" : { "10" : "10" } }
+        }
+      },
+      { "user_add_role" : {
+          "account" : [ "general-account" ],
+          "roles" : { "value" : { "5" : "5", "6" : "6" } }
+        }
+      },
+      { "list_add" : {
+          "list" : [ "general-account:og-user-node" ],
+          "item" : [ "new-organization" ],
+          "unique" : "1"
+        }
+      },
+      { "entity_save" : { "data" : [ "general-account" ], "immediate" : "1" } },
+      { "og_grant_og_role" : {
+          "account" : [ "general-account" ],
+          "group" : [ "new-organization" ],
+          "roles" : { "value" : { "administrator member" : "administrator member" } }
+        }
+      },
+      { "dl_billing_management_authenicate_user" : {
+          "USING" : { "user" : [ "general-account" ] },
+          "PROVIDE" : { "auth_user" : { "auth_user" : "Authenicated User" } }
+        }
+      },
+      { "dl_billing_management_make_org_admin" : {
+          "user" : [ "general-account:uid" ],
+          "group" : [ "new-organization:nid" ]
+        }
+      },
+      { "php_eval" : { "code" : "watchdog(\u0027rules debug\u0027,\u0022Custom rule finished\u0022);" } }
+    ]
+  }
+}
